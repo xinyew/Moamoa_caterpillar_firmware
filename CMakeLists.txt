@@ -1,4 +1,10 @@
 cmake_minimum_required(VERSION 3.20.0)
+
+# Adding board defined in this project to the board searching list
+list(APPEND BOARD_ROOT ${CMAKE_CURRENT_SOURCE_DIR})
+
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
-project(hello_world)
+project(caterpillar)
 target_sources(app PRIVATE src/main.c)
+# target_sources(app PRIVATE src/myfunc.c)
+target_sources_ifdef(CONFIG_MYFUNC app PRIVATE src/myfunc.c)
