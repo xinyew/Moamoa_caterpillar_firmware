@@ -1,8 +1,5 @@
-# Copyright (c) 2024 Nordic Semiconductor ASA
-# SPDX-License-Identifier: Apache-2.0
-
-identifier: nrf54l15dk/nrf54l15/cpuapp
-name: nRF54l15-DK-nRF54l15-Application
+identifier: caterpillar/nrf54l15/cpuapp
+name: Caterpillar-Application-Core
 type: mcu
 arch: arm
 toolchain:
@@ -12,13 +9,6 @@ sysbuild: true
 ram: 188
 flash: 1428
 supported:
-  - adc
-  - counter
-  - dmic
   - gpio
   - i2c
-  - i2s
   - pwm
-  - retained_mem
-  - spi
-  - watchdog

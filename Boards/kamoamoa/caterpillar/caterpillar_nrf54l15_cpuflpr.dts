@@ -11,12 +11,10 @@
 /delete-node/ &cpuflpr_sram;
 
 / {
-	model = "Nordic nRF54L15 DK nRF54L15 FLPR MCU";
-	compatible = "nordic,nrf54l15dk_nrf54l15-cpuflpr";
+	model = "Caterpillar nRF54L15 FLPR MCU";
+	compatible = "caterpillar,nrf54l15-cpuflpr";
 
 	chosen {
-		zephyr,console = &uart30;
-		zephyr,shell-uart = &uart30;
 		zephyr,code-partition = &cpuflpr_code_partition;
 		zephyr,flash = &cpuflpr_rram;
 		zephyr,sram = &cpuflpr_sram;
@@ -51,10 +49,6 @@
 	status = "okay";
 };
 
-&uart30 {
-	status = "okay";
-};
-
 &gpio0 {
 	status = "okay";
 };
@@ -73,15 +67,4 @@
 
 &gpiote30 {
 	status = "okay";
-};
-
-/*
- * Note this SPI instance conflicts with UART30. Disable or reconfigure pinctrl for UART30
- * to use this SPI instance.
- */
-nordic_expansion_spi: &spi22 {
-	cs-gpios = <&gpio1 10 GPIO_ACTIVE_LOW>;
-	pinctrl-0 = <&spi22_default>;
-	pinctrl-1 = <&spi22_sleep>;
-	pinctrl-names = "default", "sleep";
 };
