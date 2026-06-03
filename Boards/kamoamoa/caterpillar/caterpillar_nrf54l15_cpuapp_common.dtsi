@@ -19,8 +19,7 @@
 };
 
 &lfxo {
-	load-capacitors = "internal";
-	load-capacitance-femtofarad = <17000>;
+	status = "disabled";
 };
 
 &hfxo {
