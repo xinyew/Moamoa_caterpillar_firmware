@@ -1,0 +1,12 @@
+# Enable GPIO
+CONFIG_GPIO=y
+
+# Memory Execution (Run from RAM)
+CONFIG_USE_DT_CODE_PARTITION=y
+CONFIG_XIP=n
+
+# Disable UART, Enable Segger RTT for Debug
+CONFIG_SERIAL=n
+CONFIG_CONSOLE=y
+CONFIG_USE_SEGGER_RTT=y
+CONFIG_RTT_CONSOLE=y

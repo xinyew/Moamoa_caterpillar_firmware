@@ -1,0 +1,35 @@
+board:
+  name: caterpillar
+  full_name: Caterpillar Untethering Board
+  vendor: kamoamoa
+  socs:
+    - name: nrf54l15
+
+runners:
+  run_once:
+    '--recover':
+      - runners:
+          - nrfutil
+        run: first
+        groups:
+          - boards:
+              - caterpillar/nrf54l15/cpuapp
+              - caterpillar/nrf54l15/cpuflpr
+    '--erase':
+      - runners:
+          - jlink
+          - nrfutil
+        run: first
+        groups:
+          - boards:
+              - caterpillar/nrf54l15/cpuapp
+              - caterpillar/nrf54l15/cpuflpr
+    '--reset':
+      - runners:
+          - jlink
+          - nrfutil
+        run: last
+        groups:
+          - boards:
+              - caterpillar/nrf54l15/cpuapp
+              - caterpillar/nrf54l15/cpuflpr

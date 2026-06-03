@@ -1,0 +1,12 @@
+# Enable GPIO and MPU
+CONFIG_GPIO=y
+CONFIG_ARM_MPU=y
+
+# Subsystem defaults for Caterpillar Hardware
+CONFIG_I2C=y
+CONFIG_PWM=y
+
+# Disable UART, Enable Segger RTT for Debug
+CONFIG_SERIAL=n
+CONFIG_USE_SEGGER_RTT=y
+CONFIG_RTT_CONSOLE=y
