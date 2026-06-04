@@ -8,6 +8,7 @@ project(caterpillar)
 target_sources(app PRIVATE
     src/main.c
     src/drivers/driver_stbb1_apur.c
+    src/drivers/driver_drv8212.c
 )
 # target_sources(app PRIVATE src/myfunc.c)
 target_sources_ifdef(CONFIG_MYFUNC app PRIVATE src/myfunc.c)
