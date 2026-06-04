@@ -9,6 +9,7 @@
 
 #include "drivers/driver_stbb1_apur.h"
 #include "drivers/driver_drv8212.h"
+#include "drivers/driver_asm330lhh.h"
 
 LOG_MODULE_REGISTER(caterpillar_main, LOG_LEVEL_DBG);
 
@@ -26,8 +27,27 @@ int main(void)
         LOG_ERR("Failed to init DRV8212");
     }
 
+    /* ASM330LHHTR IMU */
+    if (drv_asm330lhh_init() < 0) {
+        LOG_ERR("Failed to init IMU");
+    }
+
+    uint32_t tick = 0;
     while (1) {
-        printk("Heartbeat\n");
-        k_msleep(5000);
+        struct asm330lhh_data imu;
+        if (drv_asm330lhh_read(&imu) == 0) {
+            int32_t deg = imu.temp / 1000;
+            int32_t mdeg = imu.temp % 1000;
+            if (mdeg < 0) mdeg = -mdeg;
+
+            printk("[%5u] A: %6d %6d %6d mg  |  G: %6d %6d %6d mdps  |  T: %d.%03d C\n",
+                   tick,
+                   imu.accel_x, imu.accel_y, imu.accel_z,
+                   imu.gyro_x,  imu.gyro_y,  imu.gyro_z,
+                   (int)deg, (int)mdeg);
+        }
+
+        tick++;
+        k_msleep(200);
     }
 }

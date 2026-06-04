@@ -75,3 +75,12 @@
 		reg = <0x0 0x1>;
 	};
 };
+
+// Using NFC pins as i2c bus
+&uicr {
+    nfct-pins-as-gpios;
+};
+
+&nfct {
+    status = "disabled";
+};
