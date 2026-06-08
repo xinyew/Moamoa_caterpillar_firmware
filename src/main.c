@@ -10,6 +10,7 @@
 #include "drivers/driver_stbb1_apur.h"
 #include "drivers/driver_drv8212.h"
 #include "drivers/driver_asm330lhh.h"
+#include "drivers/max5419.h"
 
 LOG_MODULE_REGISTER(caterpillar_main, LOG_LEVEL_DBG);
 
@@ -25,6 +26,11 @@ int main(void)
     /* DRV8212P motor driver — enable (LOW = on) */
     if (drv_drv8212_init() < 0) {
         LOG_ERR("Failed to init DRV8212");
+    }
+
+    /* MAX5419LETA digipot — set STBB1-APUR output to 4.0 V */
+    if (max5419_init() == 0) {
+        max5419_set_voltage(4.0f);
     }
 
     /* ASM330LHHTR IMU */

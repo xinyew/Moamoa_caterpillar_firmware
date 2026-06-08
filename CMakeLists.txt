@@ -10,6 +10,7 @@ target_sources(app PRIVATE
     src/drivers/driver_stbb1_apur.c
     src/drivers/driver_drv8212.c
     src/drivers/driver_asm330lhh.c
+    src/drivers/max5419.c
 )
 # target_sources(app PRIVATE src/myfunc.c)
 target_sources_ifdef(CONFIG_MYFUNC app PRIVATE src/myfunc.c)

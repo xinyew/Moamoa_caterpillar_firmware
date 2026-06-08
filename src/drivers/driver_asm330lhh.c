@@ -61,11 +61,11 @@ static int reg_read(uint8_t reg, uint8_t *buf, size_t len)
     return i2c_write_read(IMU_I2C, IMU_ADDR, &reg, 1, buf, len);
 }
 
-/** Quick probe: write 1 byte.  Returns 0 if the device ACKs its address. */
+/** Quick probe: read 1 byte.  Returns 0 if the device ACKs its address. */
 static int i2c_ping(uint8_t addr)
 {
-    uint8_t dummy = 0;
-    return i2c_write(IMU_I2C, &dummy, 1, addr);
+    uint8_t dummy;
+    return i2c_read(IMU_I2C, &dummy, 1, addr);
 }
 
 static int16_t sign_extend_pair(uint8_t l, uint8_t h)
