@@ -11,6 +11,7 @@
 #include "drivers/driver_drv8212.h"
 #include "drivers/driver_asm330lhh.h"
 #include "drivers/max5419.h"
+#include "drivers/driver_pwm.h"
 
 LOG_MODULE_REGISTER(caterpillar_main, LOG_LEVEL_DBG);
 
@@ -23,14 +24,19 @@ int main(void)
         LOG_ERR("Failed to enable DCDC");
     }
 
-    /* DRV8212P motor driver — enable (LOW = on) */
+    /* DRV8212P motor driver — wake (nSLEEP = HIGH) */
     if (drv_drv8212_init() < 0) {
         LOG_ERR("Failed to init DRV8212");
     }
 
     /* MAX5419LETA digipot — set STBB1-APUR output to 4.0 V */
     if (max5419_init() == 0) {
-        max5419_set_voltage(4.0f);
+        max5419_set_voltage(5.2f);
+    }
+
+    /* PWM20 — 113 Hz, 50 % on IN1 (P1.07) + IN2 (P1.08) */
+    if (drv_pwm_init() < 0) {
+        LOG_ERR("Failed to init PWM");
     }
 
     /* ASM330LHHTR IMU */

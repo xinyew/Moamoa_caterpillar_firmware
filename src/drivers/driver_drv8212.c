@@ -1,9 +1,10 @@
 /*
- * DRV8212P motor driver — sleep pin control.
+ * DRV8212P motor driver — nSLEEP pin control.
  *
- * Controls P1.06 (GPIO1, pin 6) — ~SLEEP pin.
- * LOW  = on (driver enabled)
- * HIGH = off (driver sleeping)
+ * Controls P1.06 (GPIO1, pin 6) — active-low nSLEEP pin.
+ * Per TI datasheet:
+ *   LOW  = sleep mode (driver disabled, outputs Hi-Z)
+ *   HIGH = awake     (driver enabled)
  */
 
 #include "driver_drv8212.h"
@@ -33,20 +34,20 @@ int drv_drv8212_init(void)
         return -ENODEV;
     }
 
-    /* Start LOW = driver on */
+    /* Drive HIGH to wake the driver (nSLEEP de-asserted) */
     ret = gpio_pin_configure(DRV8212_SLEEP_PORT, DRV8212_SLEEP_PIN,
-                              GPIO_OUTPUT_LOW);
+                              GPIO_OUTPUT_HIGH);
     if (ret < 0) {
-        LOG_ERR("Failed to configure DRV8212 ~SLEEP (P1.06): %d", ret);
+        LOG_ERR("Failed to configure DRV8212 nSLEEP (P1.06): %d", ret);
         return ret;
     }
 
     /* Read-back verification */
     int level = gpio_pin_get(DRV8212_SLEEP_PORT, DRV8212_SLEEP_PIN);
-    LOG_INF("DRV8212 ~SLEEP (P1.06): %s (read-back=%d)",
-            level > 0 ? "HIGH (off)" : "LOW (on)", level);
-    if (level > 0) {
-        LOG_WRN("DRV8212 ~SLEEP read-back is HIGH — driver unexpectedly off");
+    LOG_INF("DRV8212 nSLEEP (P1.06): %s (read-back=%d)",
+            level > 0 ? "HIGH (awake)" : "LOW (sleep)", level);
+    if (level <= 0) {
+        LOG_WRN("DRV8212 nSLEEP is LOW — driver is asleep, motor won't spin");
     }
 
     return 0;
