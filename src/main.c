@@ -31,7 +31,7 @@ int main(void)
 
     /* MAX5419LETA digipot — set STBB1-APUR output to 4.0 V */
     if (max5419_init() == 0) {
-        max5419_set_voltage(5.2f);
+        max5419_set_voltage(3.1f);
     }
 
     /* PWM20 — 113 Hz, 50 % on IN1 (P1.07) + IN2 (P1.08) */

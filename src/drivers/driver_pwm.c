@@ -24,7 +24,7 @@ static const struct device *pwm_dev =
     DEVICE_DT_GET(DT_NODELABEL(pwm20));
 
 /* 113 Hz → 8,849,558 ns period */
-#define PWM_PERIOD_NS       8849558U
+#define PWM_PERIOD_NS       2882352U
 #define PWM_PULSE_10PCT_NS  (PWM_PERIOD_NS * 10U / 100U)  /* 10 % to avoid inrush */
 #define PWM_PULSE_50PCT_NS  (PWM_PERIOD_NS / 2U)           /* 50 % full power */
 
