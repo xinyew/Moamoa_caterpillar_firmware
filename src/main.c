@@ -12,6 +12,7 @@
 #include "drivers/driver_asm330lhh.h"
 #include "drivers/max5419.h"
 #include "drivers/driver_pwm.h"
+#include "interface/ble_interface.h"
 
 LOG_MODULE_REGISTER(caterpillar_main, LOG_LEVEL_DBG);
 
@@ -29,14 +30,19 @@ int main(void)
         LOG_ERR("Failed to init DRV8212");
     }
 
-    /* MAX5419LETA digipot — set STBB1-APUR output to 4.0 V */
+    /* MAX5419LETA digipot — set STBB1-APUR output */
     if (max5419_init() == 0) {
         max5419_set_voltage(3.1f);
     }
 
-    /* PWM20 — 113 Hz, 50 % on IN1 (P1.07) + IN2 (P1.08) */
+    /* PWM20 — default 113 Hz, 50 % */
     if (drv_pwm_init() < 0) {
         LOG_ERR("Failed to init PWM");
+    }
+
+    /* BLE GATT server — remote frequency control */
+    if (ble_interface_init() < 0) {
+        LOG_ERR("Failed to init BLE");
     }
 
     /* ASM330LHHTR IMU */

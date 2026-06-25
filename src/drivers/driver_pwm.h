@@ -4,7 +4,7 @@
 #include <zephyr/kernel.h>
 
 /**
- * @brief Initialize PWM20 at 113 Hz, 50 % duty on both channels.
+ * @brief Initialize PWM20 at 113 Hz, 50 % duty on CH0 (IN1), CH1 (IN2) LOW.
  *
  * P1.07 = CH0 (IN1), P1.08 = CH1 (IN2).
  *
@@ -20,5 +20,13 @@ int drv_pwm_init(void);
  * @return 0 on success.
  */
 int drv_pwm_set_duty(uint8_t channel, uint8_t percent);
+
+/**
+ * @brief Change the PWM frequency on the fly (keeps current duty ratio).
+ *
+ * @param hz  Frequency in Hz (1–1000).
+ * @return 0 on success, -EINVAL if out of range.
+ */
+int drv_pwm_set_frequency(uint16_t hz);
 
 #endif /* DRIVER_PWM_H */
