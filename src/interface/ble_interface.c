@@ -15,6 +15,7 @@
 #include <zephyr/bluetooth/gatt.h>
 #include <zephyr/bluetooth/uuid.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/kernel.h>
 
 LOG_MODULE_REGISTER(ble_if, LOG_LEVEL_INF);
 
@@ -107,10 +108,30 @@ static void connected(struct bt_conn *conn, uint8_t err)
     bt_conn_le_param_update(conn, &param);
 }
 
+static struct bt_le_adv_param adv_param;  /* saved for re-advertise */
+
+static void restart_advertise(struct k_work *work)
+{
+    ARG_UNUSED(work);
+    int ret = bt_le_adv_start(&adv_param, ad, ARRAY_SIZE(ad), NULL, 0);
+    if (ret) {
+        LOG_ERR("BLE re-advertise failed: %d", ret);
+    } else {
+        LOG_INF("BLE re-advertising");
+    }
+}
+
+static K_WORK_DELAYABLE_DEFINE(adv_restart_work, restart_advertise);
+
 static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
     ARG_UNUSED(conn);
     LOG_INF("BLE disconnected (reason %u)", reason);
+
+    /* Defer re-advertise — bt_le_adv_start must not be called
+     * synchronously from the BLE stack's own callback context.
+     */
+    k_work_schedule(&adv_restart_work, K_MSEC(50));
 }
 
 static struct bt_conn_cb conn_callbacks = {
@@ -138,7 +159,7 @@ int ble_interface_init(void)
     bt_conn_cb_register(&conn_callbacks);
 
     /* Start connectable advertising — fast interval for quick discovery */
-    struct bt_le_adv_param adv_param = BT_LE_ADV_PARAM_INIT(
+    adv_param = (struct bt_le_adv_param)BT_LE_ADV_PARAM_INIT(
         BT_LE_ADV_OPT_CONN,
         BT_GAP_ADV_FAST_INT_MIN_1,
         BT_GAP_ADV_FAST_INT_MAX_1,
