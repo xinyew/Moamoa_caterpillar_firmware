@@ -28,7 +28,7 @@ Debug output via Segger RTT.
 | DCDC EN             | P2.03 | out       | STBB1-APUR enable, active-high              |
 
 ## Custom board files
-Please refer to ./Boards/kamoamoa/caterpillar/* for available pins, peripherals, and configs
+Please refer to ./boards/kamoamoa/caterpillar/* for available pins, peripherals, and configs
 
 ## I2C Bus
 

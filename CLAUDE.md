@@ -5,10 +5,9 @@
 ## Quick Ref
 
 - **SDK**: nRF Connect SDK v3.3.0 / Zephyr v4.3.99
-- **Board**: `raytac/an54lq_db_15_nrf54l15_cpuapp`
-- **Build**: `cd build/caterpillar && ninja`
-- **Ninja**: `C:\Users\xwang3239\ncs\toolchains\936afb6332\opt\bin\ninja.exe`
-- **Overlay**: `boards/raytac_an54lq_db_15_nrf54l15_cpuapp.overlay`
+- **Board**: `caterpillar/nrf54l15/cpuapp` — custom board (Raytac AN54LQ-P15 module), defined in `boards/kamoamoa/caterpillar/`
+- **Build**: `west build -b caterpillar/nrf54l15/cpuapp` (see Commands below; output in `build/`)
+- **Devicetree**: edit the board files in `boards/kamoamoa/caterpillar/` (no app overlay is used)
 - **Console**: RTT only (`printk()`), no UART. No `%f` — use fixed-point ints. Enable float-printing when necessary
 
 ## Commands:
@@ -16,6 +15,8 @@ Load nrf connect sdk terminal for env variables, etc, please do this before any 
 $ nrfutil sdk-manager toolchain launch --ncs-version v3.3.0 --terminal  
 Build project:
 $ west build -b caterpillar/nrf54l15/cpuapp 
+One-shot non-interactive build (no terminal needed, good for agents/scripts):
+$ nrfutil sdk-manager toolchain launch --ncs-version v3.3.0 -- west build -b caterpillar/nrf54l15/cpuapp
 Flash firmware after a successful build:
 $ west flash --recover
 Load RTT console and connect to the board (makesure to set a timeout of 5 seconds, if there's nothing or returned meaning no output):
