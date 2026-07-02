@@ -67,6 +67,14 @@ int main(void)
 
     uint32_t tick = 0;
     while (1) {
+        /* Paced by the IMU data-ready interrupt (12.5 Hz).  The timeout
+         * keeps the loop alive if the IMU is absent or wedged.
+         */
+        if (drv_asm330lhh_wait_data(500) != 0) {
+            LOG_WRN("IMU data-ready timeout");
+            continue;
+        }
+
         struct asm330lhh_data imu;
         if (drv_asm330lhh_read(&imu) == 0) {
             int32_t deg = imu.temp / 1000;
@@ -81,6 +89,5 @@ int main(void)
         }
 
         tick++;
-        k_msleep(200);
     }
 }

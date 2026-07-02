@@ -9,6 +9,7 @@
 #include "driver_asm330lhh.h"
 
 #include <zephyr/drivers/i2c.h>
+#include <zephyr/drivers/gpio.h>
 #include <zephyr/logging/log.h>
 
 LOG_MODULE_REGISTER(drv_asm330lhh, LOG_LEVEL_DBG);
@@ -25,6 +26,7 @@ LOG_MODULE_REGISTER(drv_asm330lhh, LOG_LEVEL_DBG);
 /*  Register map                                                              */
 /* -------------------------------------------------------------------------- */
 
+#define REG_INT1_CTRL   0x0D
 #define REG_WHO_AM_I    0x0F
 #define REG_CTRL1_XL    0x10
 #define REG_CTRL2_G     0x11
@@ -41,6 +43,13 @@ LOG_MODULE_REGISTER(drv_asm330lhh, LOG_LEVEL_DBG);
 
 /* CTRL3_C: BDU (bit 6) + IF_INC (bit 2) — latch L/H, auto-increment addr */
 #define CTRL3_C_VAL     0x44
+
+/* INT1_CTRL: route gyro data-ready to the INT1 pad (bit 1) */
+#define INT1_CTRL_VAL   0x02
+
+/* INT1 pad wired to P1.04 (active-high) */
+#define INT1_PORT       DEVICE_DT_GET(DT_NODELABEL(gpio1))
+#define INT1_PIN        4
 
 /* Sensitivity */
 #define ACCEL_SENS      61      /* 0.061 mg/LSB  * 1000 */
@@ -71,6 +80,43 @@ static int i2c_ping(uint8_t addr)
 static int16_t sign_extend_pair(uint8_t l, uint8_t h)
 {
     return (int16_t)(((uint16_t)h << 8) | l);
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Data-ready interrupt (INT1 → P1.04)                                       */
+/* -------------------------------------------------------------------------- */
+
+static K_SEM_DEFINE(drdy_sem, 0, 1);
+static struct gpio_callback drdy_cb;
+
+static void drdy_isr(const struct device *port, struct gpio_callback *cb,
+                     uint32_t pins)
+{
+    ARG_UNUSED(port);
+    ARG_UNUSED(cb);
+    ARG_UNUSED(pins);
+    k_sem_give(&drdy_sem);
+}
+
+static int drdy_int_setup(void)
+{
+    int ret;
+
+    if (!device_is_ready(INT1_PORT)) {
+        LOG_ERR("GPIO1 not ready");
+        return -ENODEV;
+    }
+
+    ret = gpio_pin_configure(INT1_PORT, INT1_PIN, GPIO_INPUT);
+    if (ret == 0) {
+        gpio_init_callback(&drdy_cb, drdy_isr, BIT(INT1_PIN));
+        ret = gpio_add_callback(INT1_PORT, &drdy_cb);
+    }
+    if (ret == 0) {
+        ret = gpio_pin_interrupt_configure(INT1_PORT, INT1_PIN,
+                                           GPIO_INT_EDGE_RISING);
+    }
+    return ret;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -125,7 +171,26 @@ int drv_asm330lhh_init(void)
     ret = reg_write(REG_CTRL3_C, CTRL3_C_VAL);
     if (ret < 0) { LOG_ERR("CTRL3_C: %d", ret); return ret; }
 
-    LOG_INF("IMU: XL 12.5Hz ±2g, G 12.5Hz ±250dps, BDU");
+    /* Route gyro data-ready to INT1 and arm the P1.04 interrupt */
+    ret = reg_write(REG_INT1_CTRL, INT1_CTRL_VAL);
+    if (ret < 0) { LOG_ERR("INT1_CTRL: %d", ret); return ret; }
+
+    ret = drdy_int_setup();
+    if (ret < 0) { LOG_ERR("INT1 GPIO setup: %d", ret); return ret; }
+
+    /* Clear any already-latched DRDY so the first rising edge fires */
+    struct asm330lhh_data scratch;
+    (void)drv_asm330lhh_read(&scratch);
+
+    LOG_INF("IMU: XL 12.5Hz ±2g, G 12.5Hz ±250dps, BDU, DRDY→INT1");
+    return 0;
+}
+
+int drv_asm330lhh_wait_data(int32_t timeout_ms)
+{
+    if (k_sem_take(&drdy_sem, K_MSEC(timeout_ms)) != 0) {
+        return -EAGAIN;
+    }
     return 0;
 }
 

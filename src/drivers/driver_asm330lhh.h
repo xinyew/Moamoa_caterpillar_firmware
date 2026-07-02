@@ -32,4 +32,15 @@ int drv_asm330lhh_init(void);
  */
 int drv_asm330lhh_read(struct asm330lhh_data *data);
 
+/**
+ * @brief Block until the IMU signals data-ready on INT1 (P1.04).
+ *
+ * Reading the output registers (drv_asm330lhh_read) de-asserts DRDY,
+ * so call this once per read.
+ *
+ * @param timeout_ms  Maximum time to wait, in milliseconds.
+ * @return 0 when data is ready, -EAGAIN on timeout.
+ */
+int drv_asm330lhh_wait_data(int32_t timeout_ms);
+
 #endif /* DRIVER_ASM330LHH_H */
