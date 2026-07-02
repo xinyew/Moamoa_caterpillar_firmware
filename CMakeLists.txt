@@ -14,5 +14,3 @@ target_sources(app PRIVATE
     src/drivers/driver_pwm.c
     src/interface/ble_interface.c
 )
-# target_sources(app PRIVATE src/myfunc.c)
-target_sources_ifdef(CONFIG_MYFUNC app PRIVATE src/myfunc.c)
