@@ -41,6 +41,19 @@ LOG_MODULE_REGISTER(max5419, LOG_LEVEL_INF);
 #define CMD_NV2V        0x31  /* Copy NV → volatile (restore saved wiper) */
 #define CMD_V2NV        0x29  /* Copy volatile → NV (save wiper permanently) */
 
+/*
+ * Output-voltage safety limit.
+ *
+ * The digipot is the BOTTOM leg of the STBB1-APUR feedback divider, so
+ * raising the tap lowers R_HW and raises Vout — tap = 255 shorts FB to
+ * GND and the converter boosts toward its 5.5 V maximum into the motor.
+ * Cap all requests well below that.
+ */
+#define VOUT_MAX_V      4.2f
+
+/* Highest tap that keeps Vout <= VOUT_MAX_V: tap = 255 - 127.5/(2V - 1) */
+#define TAP_MAX         237
+
 /* -------------------------------------------------------------------------- */
 /*  Public API                                                                */
 /* -------------------------------------------------------------------------- */
@@ -71,6 +84,13 @@ int max5419_init(void)
 
 int max5419_set_tap(uint8_t tap)
 {
+    if (tap > TAP_MAX) {
+        LOG_ERR("Tap %u rejected: exceeds safe limit %u (Vout > %d.%d V)",
+                tap, TAP_MAX,
+                (int)VOUT_MAX_V, (int)(VOUT_MAX_V * 10.0f) % 10);
+        return -EINVAL;
+    }
+
     uint8_t buf[2] = { CMD_VREG, tap };
     int ret = i2c_write(i2c_dev, buf, sizeof(buf), MAX5419_I2C_ADDR);
     if (ret < 0) {
@@ -86,14 +106,19 @@ int max5419_set_voltage(float voltage)
         LOG_ERR("Voltage too low (requires V > 0.5)");
         return -EINVAL;
     }
+    if (voltage > VOUT_MAX_V) {
+        LOG_ERR("Voltage request rejected: exceeds %d.%d V limit",
+                (int)VOUT_MAX_V, (int)(VOUT_MAX_V * 10.0f) % 10);
+        return -EINVAL;
+    }
 
     float tap_f = 255.0f - 127.5f / den;
 
     /* Clamp to valid wiper range */
     if (tap_f < 0.0f) {
         tap_f = 0.0f;
-    } else if (tap_f > 255.0f) {
-        tap_f = 255.0f;
+    } else if (tap_f > (float)TAP_MAX) {
+        tap_f = (float)TAP_MAX;
     }
 
     uint8_t tap = (uint8_t)(tap_f + 0.5f);

@@ -22,12 +22,15 @@
 int max5419_init(void);
 
 /**
- * @brief Set the wiper tap position (0–255).
+ * @brief Set the wiper tap position.
  *
- * Tap 0   = W closest to L (minimum resistance H–W)
- * Tap 255 = W closest to H (maximum resistance H–W)
+ * Tap 0   = W at L end → maximum resistance H–W (200 kΩ) → minimum Vout
+ * Tap 255 = W at H end → R_HW = 0 → FB shorted to GND → runaway Vout
  *
- * @param tap  Wiper position (0–255).
+ * Taps that would push the STBB1-APUR output above the safe voltage
+ * limit (see max5419.c) are rejected with -EINVAL.
+ *
+ * @param tap  Wiper position (0–237).
  * @return 0 on success, negative errno on failure.
  */
 int max5419_set_tap(uint8_t tap);
@@ -39,7 +42,11 @@ int max5419_set_tap(uint8_t tap);
  *   Vout = 0.5 × (100 / R_HW_kΩ + 1)
  *   R_HW = 200 × (255 − tap) / 255
  *
- * @param voltage  Desired output voltage in volts.
+ * Requests above the safe limit (4.2 V — see VOUT_MAX_V in max5419.c)
+ * are rejected with -EINVAL to prevent the boost converter from being
+ * driven toward its 5.5 V maximum into the motor.
+ *
+ * @param voltage  Desired output voltage in volts (0.5 < V ≤ 4.2).
  * @return 0 on success, negative errno on failure.
  */
 int max5419_set_voltage(float voltage);
