@@ -28,24 +28,24 @@ static const struct device *pwm_dev =
 
 /* Default: 113 Hz, 0 % duty — boot in coast; main starts the motor */
 static uint32_t period_ns = 8849558U;
-static uint8_t  duty_pct  = 0;
+static uint8_t  duty_pct[2] = {0, 0};   /* CH0 = IN1, CH1 = IN2 */
 
 /* -------------------------------------------------------------------------- */
 /*  Helpers                                                                   */
 /* -------------------------------------------------------------------------- */
 
-/** Apply the current period + duty to both channels. */
+/** Apply the current period + per-channel duty to both channels. */
 static int pwm_apply(void)
 {
-    uint32_t pulse = (uint32_t)((uint64_t)period_ns * duty_pct / 100U);
-    int ret;
-
-    ret = pwm_set(pwm_dev, 0, period_ns, pulse, 0);
-    if (ret < 0) {
-        return ret;
+    for (uint8_t ch = 0; ch < 2; ch++) {
+        uint32_t pulse =
+            (uint32_t)((uint64_t)period_ns * duty_pct[ch] / 100U);
+        int ret = pwm_set(pwm_dev, ch, period_ns, pulse, 0);
+        if (ret < 0) {
+            return ret;
+        }
     }
-    ret = pwm_set(pwm_dev, 1, period_ns, 0, 0);
-    return ret;
+    return 0;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -65,8 +65,8 @@ int drv_pwm_init(void)
         return ret;
     }
 
-    LOG_INF("PWM20: %u Hz %u %% IN1(P1.07)=PWM, IN2(P1.08)=LOW → forward",
-            1000000000U / period_ns, duty_pct);
+    LOG_INF("PWM20: %u Hz, IN1(P1.07) %u %%, IN2(P1.08) %u %%",
+            1000000000U / period_ns, duty_pct[0], duty_pct[1]);
     return 0;
 }
 
@@ -76,14 +76,15 @@ int drv_pwm_set_duty(uint8_t channel, uint8_t percent)
         return -EINVAL;
     }
 
-    duty_pct = percent;
+    duty_pct[channel] = percent;
     return pwm_apply();
 }
 
 int drv_pwm_set_frequency(uint16_t hz)
 {
-    if (hz < 1 || hz > 1000) {
-        LOG_ERR("Frequency %u Hz out of range (1–1000)", hz);
+    if (hz < DRV_PWM_FREQ_MIN_HZ || hz > DRV_PWM_FREQ_MAX_HZ) {
+        LOG_ERR("Frequency %u Hz out of range (%u–%u)",
+                hz, DRV_PWM_FREQ_MIN_HZ, DRV_PWM_FREQ_MAX_HZ);
         return -EINVAL;
     }
 
@@ -95,6 +96,7 @@ int drv_pwm_set_frequency(uint16_t hz)
         return ret;
     }
 
-    LOG_INF("PWM20: %u Hz %u %%", hz, duty_pct);
+    LOG_INF("PWM20: %u Hz, IN1 %u %%, IN2 %u %%",
+            hz, duty_pct[0], duty_pct[1]);
     return 0;
 }

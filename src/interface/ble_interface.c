@@ -3,7 +3,7 @@
  *
  * Advertises as "Caterpillar", exposes one Write-Without-Response
  * characteristic (16-bit frequency in Hz, little-endian).
- * On write: validates range (1–1000 Hz) and calls drv_pwm_set_frequency().
+ * On write: validates range (4–1000 Hz) and calls drv_pwm_set_frequency().
  */
 
 #include "ble_interface.h"
@@ -60,7 +60,7 @@ static ssize_t on_freq_write(struct bt_conn *conn,
     /* Little-endian 16-bit unpack (no sys_ helper needed) */
     const uint8_t *p = (const uint8_t *)buf;
     uint16_t hz = (uint16_t)p[0] | ((uint16_t)p[1] << 8);
-    if (hz < 1 || hz > 1000) {
+    if (hz < DRV_PWM_FREQ_MIN_HZ || hz > DRV_PWM_FREQ_MAX_HZ) {
         LOG_WRN("BLE: freq %u Hz out of range", hz);
         return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
     }

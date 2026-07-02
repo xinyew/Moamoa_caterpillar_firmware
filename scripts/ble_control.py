@@ -26,6 +26,10 @@ SERVICE_UUID = "0000ffe0-0000-1000-8000-00805f9b34fb"
 CHAR_UUID    = "0000ffe1-0000-1000-8000-00805f9b34fb"
 DEVICE_NAME  = "Caterpillar"
 
+# Must match firmware (driver_pwm.h): nRF54 PWM cannot go below ~4 Hz
+FREQ_MIN = 4
+FREQ_MAX = 1000
+
 
 def pack_freq(hz: int) -> bytes:
     """Pack a 16-bit frequency into little-endian bytes."""
@@ -61,7 +65,7 @@ async def set_freq(address: str, hz: int):
 
 async def interactive(address: str):
     """REPL loop for frequency changes."""
-    print("Enter frequency in Hz (1–1000), or 'q' to quit.")
+    print(f"Enter frequency in Hz ({FREQ_MIN}–{FREQ_MAX}), or 'q' to quit.")
     print("Changes apply instantly via Write Without Response.\n")
 
     async with BleakClient(address) as client:
@@ -85,8 +89,8 @@ async def interactive(address: str):
                 print(f"  Invalid: {cmd}")
                 continue
 
-            if hz < 1 or hz > 1000:
-                print(f"  Out of range (1–1000): {hz}")
+            if hz < FREQ_MIN or hz > FREQ_MAX:
+                print(f"  Out of range ({FREQ_MIN}–{FREQ_MAX}): {hz}")
                 continue
 
             data = pack_freq(hz)
@@ -99,6 +103,11 @@ async def main():
     parser.add_argument("-f", "--freq", type=int, default=None,
                         help="Frequency in Hz (one-shot mode)")
     args = parser.parse_args()
+
+    if args.freq is not None and not (FREQ_MIN <= args.freq <= FREQ_MAX):
+        print(f"Frequency out of range ({FREQ_MIN}-{FREQ_MAX}): {args.freq}",
+              file=sys.stderr)
+        sys.exit(1)
 
     address = await discover()
     if address is None:
