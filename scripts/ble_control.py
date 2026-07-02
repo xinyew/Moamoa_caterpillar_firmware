@@ -76,7 +76,7 @@ async def send_freq(client: BleakClient, hz: int, ack: bool):
     """
     data = pack_u16(hz)
     await client.write_gatt_char(CHAR_UUID_FREQ, data, response=ack)
-    print(f"Sent: {hz} Hz → {data.hex()}"
+    print(f"Sent: {hz} Hz -> {data.hex()}"
           f"{' (acked)' if ack else ''}", flush=True)
 
 
@@ -84,7 +84,7 @@ async def send_volt(client: BleakClient, volts: float, ack: bool):
     mv = round(volts * 1000)
     data = pack_u16(mv)
     await client.write_gatt_char(CHAR_UUID_VOLT, data, response=ack)
-    print(f"Sent: {volts:.2f} V ({mv} mV) → {data.hex()}"
+    print(f"Sent: {volts:.2f} V ({mv} mV) -> {data.hex()}"
           f"{' (acked)' if ack else ''}", flush=True)
 
 

@@ -54,11 +54,19 @@ LOG_MODULE_REGISTER(max5419, LOG_LEVEL_INF);
 /* Highest tap that keeps Vout <= VOUT_MAX_V: tap = 255 - 127.5/(2V - 1) */
 #define TAP_MAX         237
 
+/* Delay between single-tap steps when ramping to a new voltage */
+#define RAMP_STEP_MS    10
+
 /* -------------------------------------------------------------------------- */
 /*  Public API                                                                */
 /* -------------------------------------------------------------------------- */
 
 static const struct device *i2c_dev = MAX5419_I2C;
+
+/* Last wiper position written; -1 until the first write after boot
+ * (the chip itself powers up at its NV default, typically midscale).
+ */
+static int16_t cur_tap = -1;
 
 int max5419_init(void)
 {
@@ -95,8 +103,38 @@ int max5419_set_tap(uint8_t tap)
     int ret = i2c_write(i2c_dev, buf, sizeof(buf), MAX5419_I2C_ADDR);
     if (ret < 0) {
         LOG_ERR("MAX5419 set tap %u failed: %d", tap, ret);
+        return ret;
     }
-    return ret;
+
+    cur_tap = tap;
+    return 0;
+}
+
+/**
+ * Walk the wiper to @p tap one step at a time.
+ *
+ * A large instantaneous VDC step under motor load can collapse the
+ * battery/system rails and reset the MCU (observed with 3.1 V → 4.0 V
+ * requests over BLE), so spread the transition out.  The first write
+ * after boot jumps directly — the motor is still in coast then.
+ */
+static int ramp_to_tap(uint8_t tap)
+{
+    if (cur_tap < 0) {
+        return max5419_set_tap(tap);
+    }
+
+    while (cur_tap != tap) {
+        uint8_t next = (uint8_t)(cur_tap + (tap > cur_tap ? 1 : -1));
+        int ret = max5419_set_tap(next);
+        if (ret < 0) {
+            return ret;
+        }
+        if (cur_tap != tap) {
+            k_msleep(RAMP_STEP_MS);
+        }
+    }
+    return 0;
 }
 
 int max5419_set_voltage(float voltage)
@@ -128,5 +166,5 @@ int max5419_set_voltage(float voltage)
     int v_dec = (int)((voltage - (float)v_int) * 100.0f + 0.5f);
     LOG_INF("Target %d.%02d V -> tap %u", v_int, v_dec, tap);
 
-    return max5419_set_tap(tap);
+    return ramp_to_tap(tap);
 }
