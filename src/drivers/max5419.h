@@ -7,6 +7,14 @@
 #define MAX5419_I2C_ADDR    0x28
 
 /*
+ * Motor rail (VDC) range achievable through the STBB1-APUR feedback
+ * divider.  Min = tap 0 (full 200 kΩ, Vout = 0.75 V).  Max is the
+ * boost-runaway safety cap enforced in max5419.c (tap ≤ 237).
+ */
+#define MAX5419_VOUT_MIN_MV  750
+#define MAX5419_VOUT_MAX_MV  4200
+
+/*
  * NOTE: The MAX5419 is write-only over I²C.
  * The 8th address bit is NOP/W (no-op/write), not R/W (read/write).
  * Reading back the wiper position via I²C is not supported by this device.

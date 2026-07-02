@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 """
-Caterpillar BLE control — low-latency PWM frequency setter.
+Caterpillar BLE control — low-latency PWM frequency / motor voltage setter.
 
-Connects to a "Caterpillar" device and writes a 16-bit frequency value
-(Hz, little-endian) via Write Without Response to a custom GATT
-characteristic (UUID 0xFFE1).
+Connects to a "Caterpillar" device and writes 16-bit little-endian values
+via Write Without Response to custom GATT characteristics:
+    0xFFE1 — PWM frequency in Hz
+    0xFFE2 — motor rail (VDC) voltage in mV
 
 Usage:
-    python ble_control.py              # interactive mode
-    python ble_control.py --freq 170   # one-shot
-    python ble_control.py -f 170       # short form
+    python ble_control.py               # interactive mode
+    python ble_control.py --freq 170    # one-shot frequency
+    python ble_control.py -f 170        # short form
+    python ble_control.py --V 3.5       # one-shot voltage (volts)
+    python ble_control.py -f 170 -V 3.1 # both in one connection
 
 Requires: pip install bleak
 """
@@ -22,18 +25,24 @@ import sys
 from bleak import BleakClient, BleakScanner
 
 # Must match firmware — see ble_interface.c
-SERVICE_UUID = "0000ffe0-0000-1000-8000-00805f9b34fb"
-CHAR_UUID    = "0000ffe1-0000-1000-8000-00805f9b34fb"
-DEVICE_NAME  = "Caterpillar"
+SERVICE_UUID   = "0000ffe0-0000-1000-8000-00805f9b34fb"
+CHAR_UUID_FREQ = "0000ffe1-0000-1000-8000-00805f9b34fb"
+CHAR_UUID_VOLT = "0000ffe2-0000-1000-8000-00805f9b34fb"
+DEVICE_NAME    = "Caterpillar"
 
 # Must match firmware (driver_pwm.h): nRF54 PWM cannot go below ~4 Hz
 FREQ_MIN = 4
 FREQ_MAX = 1000
 
+# Must match firmware (max5419.h): 0.75 V = digipot tap 0,
+# 4.2 V = boost-runaway safety cap
+VOLT_MIN = 0.75
+VOLT_MAX = 4.2
 
-def pack_freq(hz: int) -> bytes:
-    """Pack a 16-bit frequency into little-endian bytes."""
-    return struct.pack("<H", hz)
+
+def pack_u16(value: int) -> bytes:
+    """Pack a 16-bit value into little-endian bytes."""
+    return struct.pack("<H", value)
 
 
 async def discover() -> str | None:
@@ -53,26 +62,41 @@ async def discover() -> str | None:
     return device.address
 
 
-async def set_freq(address: str, hz: int):
-    """Connect, set frequency, disconnect."""
+async def send_freq(client: BleakClient, hz: int):
+    data = pack_u16(hz)
+    await client.write_gatt_char(CHAR_UUID_FREQ, data, response=False)
+    print(f"Sent: {hz} Hz → {data.hex()}", flush=True)
+
+
+async def send_volt(client: BleakClient, volts: float):
+    mv = round(volts * 1000)
+    data = pack_u16(mv)
+    await client.write_gatt_char(CHAR_UUID_VOLT, data, response=False)
+    print(f"Sent: {volts:.2f} V ({mv} mV) → {data.hex()}", flush=True)
+
+
+async def one_shot(address: str, hz: int | None, volts: float | None):
+    """Connect, apply the requested settings, disconnect."""
     print(f"Connecting to {address} ...", flush=True)
     async with BleakClient(address) as client:
         print(f"Connected (MTU={client.mtu_size})", flush=True)
-        data = pack_freq(hz)
-        await client.write_gatt_char(CHAR_UUID, data, response=False)
-        print(f"Sent: {hz} Hz → {data.hex()}", flush=True)
+        if volts is not None:
+            await send_volt(client, volts)
+        if hz is not None:
+            await send_freq(client, hz)
 
 
 async def interactive(address: str):
-    """REPL loop for frequency changes."""
-    print(f"Enter frequency in Hz ({FREQ_MIN}–{FREQ_MAX}), or 'q' to quit.")
+    """REPL loop for frequency / voltage changes."""
+    print(f"Enter frequency in Hz ({FREQ_MIN}–{FREQ_MAX}),")
+    print(f"or 'v <volts>' to set VDC ({VOLT_MIN}–{VOLT_MAX} V), or 'q' to quit.")
     print("Changes apply instantly via Write Without Response.\n")
 
     async with BleakClient(address) as client:
         print(f"Connected (MTU={client.mtu_size})\n", flush=True)
         while True:
             try:
-                cmd = input("Hz> ").strip()
+                cmd = input("> ").strip()
             except (EOFError, KeyboardInterrupt):
                 print()
                 break
@@ -81,6 +105,18 @@ async def interactive(address: str):
                 break
 
             if not cmd:
+                continue
+
+            if cmd.lower().startswith("v"):
+                try:
+                    volts = float(cmd[1:].strip())
+                except ValueError:
+                    print(f"  Invalid voltage: {cmd}")
+                    continue
+                if not (VOLT_MIN <= volts <= VOLT_MAX):
+                    print(f"  Out of range ({VOLT_MIN}–{VOLT_MAX} V): {volts}")
+                    continue
+                await send_volt(client, volts)
                 continue
 
             try:
@@ -93,15 +129,17 @@ async def interactive(address: str):
                 print(f"  Out of range ({FREQ_MIN}–{FREQ_MAX}): {hz}")
                 continue
 
-            data = pack_freq(hz)
-            await client.write_gatt_char(CHAR_UUID, data, response=False)
-            print(f"  → {hz} Hz")
+            await send_freq(client, hz)
 
 
 async def main():
-    parser = argparse.ArgumentParser(description="Caterpillar BLE frequency control")
+    parser = argparse.ArgumentParser(
+        description="Caterpillar BLE frequency / voltage control")
     parser.add_argument("-f", "--freq", type=int, default=None,
                         help="Frequency in Hz (one-shot mode)")
+    parser.add_argument("-V", "--V", "--volt", dest="volt", type=float,
+                        default=None,
+                        help="Motor rail voltage in volts (one-shot mode)")
     args = parser.parse_args()
 
     if args.freq is not None and not (FREQ_MIN <= args.freq <= FREQ_MAX):
@@ -109,12 +147,17 @@ async def main():
               file=sys.stderr)
         sys.exit(1)
 
+    if args.volt is not None and not (VOLT_MIN <= args.volt <= VOLT_MAX):
+        print(f"Voltage out of range ({VOLT_MIN}-{VOLT_MAX} V): {args.volt}",
+              file=sys.stderr)
+        sys.exit(1)
+
     address = await discover()
     if address is None:
         sys.exit(1)
 
-    if args.freq is not None:
-        await set_freq(address, args.freq)
+    if args.freq is not None or args.volt is not None:
+        await one_shot(address, args.freq, args.volt)
     else:
         await interactive(address)
 

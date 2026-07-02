@@ -42,14 +42,14 @@ LOG_MODULE_REGISTER(max5419, LOG_LEVEL_INF);
 #define CMD_V2NV        0x29  /* Copy volatile → NV (save wiper permanently) */
 
 /*
- * Output-voltage safety limit.
+ * Output-voltage safety limit (mV value shared via max5419.h).
  *
  * The digipot is the BOTTOM leg of the STBB1-APUR feedback divider, so
  * raising the tap lowers R_HW and raises Vout — tap = 255 shorts FB to
  * GND and the converter boosts toward its 5.5 V maximum into the motor.
  * Cap all requests well below that.
  */
-#define VOUT_MAX_V      4.2f
+#define VOUT_MAX_V      ((float)MAX5419_VOUT_MAX_MV / 1000.0f)
 
 /* Highest tap that keeps Vout <= VOUT_MAX_V: tap = 255 - 127.5/(2V - 1) */
 #define TAP_MAX         237
