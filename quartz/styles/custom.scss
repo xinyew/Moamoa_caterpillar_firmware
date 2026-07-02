@@ -1,0 +1,93 @@
+@use "./variables.scss" as *;
+
+// ── Sweet Neon ──────────────────────────────────────────────────────
+// Matches the "Sweet Neon" Obsidian theme: pink/cyan/yellow heading
+// hierarchy on a deep navy background, with soft neon glows.
+
+:root {
+  --sweet-pink: #ff4a7a;
+  --sweet-cyan: #1eb8e5;
+  --sweet-yellow: #f7e060;
+  --sweet-muted: #a15e76;
+  --sweet-faint: #5a6280;
+  --sweet-surface: #121a30;
+  --sweet-border: #1a2448;
+  --sweet-code-bg: #0a0f1c;
+}
+
+// Heading hierarchy (h1 pink, h2 cyan, h3 yellow, h5 muted, h6 faint)
+.page article {
+  h1 {
+    color: var(--sweet-pink);
+    text-shadow: 0 0 12px rgba(255, 74, 122, 0.35);
+  }
+  h2 {
+    color: var(--sweet-cyan);
+    text-shadow: 0 0 12px rgba(30, 184, 229, 0.3);
+  }
+  h3 {
+    color: var(--sweet-yellow);
+    text-shadow: 0 0 10px rgba(247, 224, 96, 0.25);
+  }
+  h5 {
+    color: var(--sweet-muted);
+  }
+  h6 {
+    color: var(--sweet-faint);
+  }
+}
+
+// Page title gets the neon pink treatment too
+.page-title a {
+  color: var(--sweet-pink);
+  text-shadow: 0 0 14px rgba(255, 74, 122, 0.4);
+}
+
+// Links: cyan, hover pink (like the Obsidian theme)
+.page article a.internal,
+.page article a.external {
+  color: var(--sweet-cyan);
+  &:hover {
+    color: var(--sweet-pink);
+  }
+}
+
+// Broken / unresolved wikilinks render muted, not clickable-looking
+.page article a.internal.broken {
+  color: var(--sweet-muted);
+  background-color: transparent;
+  text-decoration: line-through;
+}
+
+// Code blocks on the darker surface
+.page article pre,
+.page article code {
+  background-color: var(--sweet-code-bg);
+  border: 1px solid var(--sweet-border);
+}
+
+// Blockquotes: pink bar + faint pink wash
+.page article blockquote {
+  border-left: 3px solid var(--sweet-pink);
+  background-color: rgba(255, 74, 122, 0.05);
+}
+
+// Tables styled like the Obsidian theme
+.page article table {
+  th {
+    background-color: var(--sweet-surface);
+    border-bottom: 2px solid #2a3860;
+  }
+  td {
+    border-color: var(--sweet-border);
+  }
+  tr:hover td {
+    background-color: rgba(255, 74, 122, 0.05);
+  }
+}
+
+// Search bar & explorer accents
+.search button {
+  background-color: var(--sweet-surface);
+  border: 1px solid var(--sweet-border);
+}
