@@ -89,25 +89,6 @@ BT_GATT_SERVICE_DEFINE(caterpillar_svc,
 /*  Connection callbacks                                                      */
 /* -------------------------------------------------------------------------- */
 
-static void connected(struct bt_conn *conn, uint8_t err)
-{
-    if (err) {
-        LOG_ERR("BLE connection failed: %u", err);
-        return;
-    }
-
-    LOG_INF("BLE connected");
-
-    /* Request low-latency connection params (7.5 ms interval) */
-    struct bt_le_conn_param param = {
-        .interval_min = 6,
-        .interval_max = 12,
-        .latency = 0,
-        .timeout = 400,
-    };
-    bt_conn_le_param_update(conn, &param);
-}
-
 static struct bt_le_adv_param adv_param;  /* saved for re-advertise */
 
 static void restart_advertise(struct k_work *work)
@@ -122,6 +103,30 @@ static void restart_advertise(struct k_work *work)
 }
 
 static K_WORK_DELAYABLE_DEFINE(adv_restart_work, restart_advertise);
+
+static void connected(struct bt_conn *conn, uint8_t err)
+{
+    if (err) {
+        LOG_ERR("BLE connection failed: %u", err);
+        /* Advertising already stopped, and disconnected() will not
+         * fire for a connection that never established — re-advertise
+         * or the device stays unreachable until reboot.
+         */
+        k_work_schedule(&adv_restart_work, K_MSEC(50));
+        return;
+    }
+
+    LOG_INF("BLE connected");
+
+    /* Request low-latency connection params (7.5 ms interval) */
+    struct bt_le_conn_param param = {
+        .interval_min = 6,
+        .interval_max = 12,
+        .latency = 0,
+        .timeout = 400,
+    };
+    bt_conn_le_param_update(conn, &param);
+}
 
 static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
