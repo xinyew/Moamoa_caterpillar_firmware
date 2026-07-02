@@ -20,7 +20,6 @@ LOG_MODULE_REGISTER(drv_asm330lhh, LOG_LEVEL_DBG);
 
 #define IMU_I2C         DEVICE_DT_GET(DT_NODELABEL(i2c20))
 #define IMU_ADDR        0x6A
-#define MAX5419_ADDR    0x28
 
 /* -------------------------------------------------------------------------- */
 /*  Register map                                                              */
@@ -132,11 +131,6 @@ int drv_asm330lhh_init(void)
         LOG_ERR("I2C20 not ready");
         return -ENODEV;
     }
-
-    /* Probe MAX5419LETA (digipot) at 0x28 */
-    ret = i2c_ping(MAX5419_ADDR);
-    LOG_INF("MAX5419LETA @0x%02X: %s (%d)", MAX5419_ADDR,
-            ret == 0 ? "ACK" : "NAK", ret);
 
     /* Probe ASM330LHHTR IMU at 0x6A */
     ret = i2c_ping(IMU_ADDR);
