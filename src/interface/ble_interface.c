@@ -1,8 +1,9 @@
 /*
  * BLE interface — GATT server for PWM frequency control.
  *
- * Advertises as "Caterpillar", exposes two Write-Without-Response
- * characteristics (both 16-bit little-endian):
+ * Advertises as "Caterpillar", exposes two writable characteristics
+ * (both 16-bit little-endian, accepting acknowledged Write Requests
+ * as well as Write-Without-Response):
  *   0xFFE1 — PWM frequency in Hz    (4–1000) → drv_pwm_set_frequency()
  *   0xFFE2 — motor rail VDC in mV (750–4200) → max5419_set_voltage()
  */
@@ -118,11 +119,11 @@ static ssize_t on_volt_write(struct bt_conn *conn,
 BT_GATT_SERVICE_DEFINE(caterpillar_svc,
     BT_GATT_PRIMARY_SERVICE(BT_UUID_CATERPILLAR_SVC),
     BT_GATT_CHARACTERISTIC(BT_UUID_CATERPILLAR_FREQ,
-        BT_GATT_CHRC_WRITE_WITHOUT_RESP,
+        BT_GATT_CHRC_WRITE | BT_GATT_CHRC_WRITE_WITHOUT_RESP,
         BT_GATT_PERM_WRITE,
         NULL, on_freq_write, NULL),
     BT_GATT_CHARACTERISTIC(BT_UUID_CATERPILLAR_VOLT,
-        BT_GATT_CHRC_WRITE_WITHOUT_RESP,
+        BT_GATT_CHRC_WRITE | BT_GATT_CHRC_WRITE_WITHOUT_RESP,
         BT_GATT_PERM_WRITE,
         NULL, on_volt_write, NULL),
 );

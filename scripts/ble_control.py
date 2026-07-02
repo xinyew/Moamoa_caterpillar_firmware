@@ -3,9 +3,13 @@
 Caterpillar BLE control — low-latency PWM frequency / motor voltage setter.
 
 Connects to a "Caterpillar" device and writes 16-bit little-endian values
-via Write Without Response to custom GATT characteristics:
+to custom GATT characteristics:
     0xFFE1 — PWM frequency in Hz
     0xFFE2 — motor rail (VDC) voltage in mV
+
+One-shot mode uses acknowledged writes (confirmed by the device before
+disconnecting); interactive mode uses Write Without Response for lowest
+latency while the connection stays open.
 
 Usage:
     python ble_control.py               # interactive mode
@@ -62,28 +66,37 @@ async def discover() -> str | None:
     return device.address
 
 
-async def send_freq(client: BleakClient, hz: int):
+async def send_freq(client: BleakClient, hz: int, ack: bool):
+    """ack=True uses an ATT Write Request: the await returns only after
+    the device confirms execution, so it survives an immediate
+    disconnect and surfaces firmware rejections as exceptions.
+    ack=False (Write Without Response) is fire-and-forget: lower
+    latency, but writes queued right before a disconnect can be lost
+    (macOS/CoreBluetooth buffers them aggressively).
+    """
     data = pack_u16(hz)
-    await client.write_gatt_char(CHAR_UUID_FREQ, data, response=False)
-    print(f"Sent: {hz} Hz → {data.hex()}", flush=True)
+    await client.write_gatt_char(CHAR_UUID_FREQ, data, response=ack)
+    print(f"Sent: {hz} Hz → {data.hex()}"
+          f"{' (acked)' if ack else ''}", flush=True)
 
 
-async def send_volt(client: BleakClient, volts: float):
+async def send_volt(client: BleakClient, volts: float, ack: bool):
     mv = round(volts * 1000)
     data = pack_u16(mv)
-    await client.write_gatt_char(CHAR_UUID_VOLT, data, response=False)
-    print(f"Sent: {volts:.2f} V ({mv} mV) → {data.hex()}", flush=True)
+    await client.write_gatt_char(CHAR_UUID_VOLT, data, response=ack)
+    print(f"Sent: {volts:.2f} V ({mv} mV) → {data.hex()}"
+          f"{' (acked)' if ack else ''}", flush=True)
 
 
 async def one_shot(address: str, hz: int | None, volts: float | None):
-    """Connect, apply the requested settings, disconnect."""
+    """Connect, apply the requested settings (acknowledged), disconnect."""
     print(f"Connecting to {address} ...", flush=True)
     async with BleakClient(address) as client:
         print(f"Connected (MTU={client.mtu_size})", flush=True)
         if volts is not None:
-            await send_volt(client, volts)
+            await send_volt(client, volts, ack=True)
         if hz is not None:
-            await send_freq(client, hz)
+            await send_freq(client, hz, ack=True)
 
 
 async def interactive(address: str):
@@ -116,7 +129,7 @@ async def interactive(address: str):
                 if not (VOLT_MIN <= volts <= VOLT_MAX):
                     print(f"  Out of range ({VOLT_MIN}–{VOLT_MAX} V): {volts}")
                     continue
-                await send_volt(client, volts)
+                await send_volt(client, volts, ack=False)
                 continue
 
             try:
@@ -129,7 +142,7 @@ async def interactive(address: str):
                 print(f"  Out of range ({FREQ_MIN}–{FREQ_MAX}): {hz}")
                 continue
 
-            await send_freq(client, hz)
+            await send_freq(client, hz, ack=False)
 
 
 async def main():
@@ -157,7 +170,11 @@ async def main():
         sys.exit(1)
 
     if args.freq is not None or args.volt is not None:
-        await one_shot(address, args.freq, args.volt)
+        try:
+            await one_shot(address, args.freq, args.volt)
+        except Exception as e:
+            print(f"Write failed: {e}", file=sys.stderr)
+            sys.exit(1)
     else:
         await interactive(address)
 
