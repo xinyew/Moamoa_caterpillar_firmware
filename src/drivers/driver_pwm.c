@@ -26,9 +26,9 @@ LOG_MODULE_REGISTER(drv_pwm, LOG_LEVEL_INF);
 static const struct device *pwm_dev =
     DEVICE_DT_GET(DT_NODELABEL(pwm20));
 
-/* Default: 113 Hz */
+/* Default: 113 Hz, 0 % duty — boot in coast; main starts the motor */
 static uint32_t period_ns = 8849558U;
-static uint8_t  duty_pct  = 50;
+static uint8_t  duty_pct  = 0;
 
 /* -------------------------------------------------------------------------- */
 /*  Helpers                                                                   */

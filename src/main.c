@@ -16,13 +16,26 @@
 
 LOG_MODULE_REGISTER(caterpillar_main, LOG_LEVEL_DBG);
 
+/* Motor rail (VDC) target — applied via MAX5419 digipot before the
+ * STBB1-APUR is enabled, so the rail never runs at the digipot's
+ * power-on default (midscale ≈ 1.0 V) or a stale NV value.
+ */
+#define MOTOR_VDC_V  3.1f
+
 int main(void)
 {
     printk("\n=== Caterpillar Boot ===\n");
 
-    /* STBB1-APUR DCDC converter enable */
-    if (drv_stbb1_apur_init() < 0) {
+    /* MAX5419LETA digipot — program VDC feedback before DCDC enable */
+    bool vdc_ok = (max5419_init() == 0) &&
+                  (max5419_set_voltage(MOTOR_VDC_V) == 0);
+
+    /* STBB1-APUR DCDC converter — only enable at a known voltage */
+    if (!vdc_ok) {
+        LOG_ERR("Digipot voltage set failed — leaving motor rail disabled");
+    } else if (drv_stbb1_apur_init() < 0) {
         LOG_ERR("Failed to enable DCDC");
+        vdc_ok = false;
     }
 
     /* DRV8212P motor driver — wake (nSLEEP = HIGH) */
@@ -30,14 +43,16 @@ int main(void)
         LOG_ERR("Failed to init DRV8212");
     }
 
-    /* MAX5419LETA digipot — set STBB1-APUR output */
-    if (max5419_init() == 0) {
-        max5419_set_voltage(3.1f);
-    }
-
-    /* PWM20 — default 113 Hz, 50 % */
+    /* PWM20 — configured at default frequency, 0 % duty (coast) */
     if (drv_pwm_init() < 0) {
         LOG_ERR("Failed to init PWM");
+    }
+
+    /* Auto-start: forward drive at 50 % once all rails are up.
+     * Remove this to keep the motor idle until commanded over BLE.
+     */
+    if (vdc_ok) {
+        drv_pwm_set_duty(0, 50);
     }
 
     /* BLE GATT server — remote frequency control */
