@@ -214,9 +214,9 @@ int drv_asm330lhh_read(struct asm330lhh_data *data)
     data->temp = ((int32_t)raw_temp * 1000) / 256 + 25000;
 
     /* Gyroscope (raw[2]..raw[7]) */
-    data->gyro_x = (int16_t)((int32_t)sign_extend_pair(raw[2], raw[3]) * GYRO_SENS / 100);
-    data->gyro_y = (int16_t)((int32_t)sign_extend_pair(raw[4], raw[5]) * GYRO_SENS / 100);
-    data->gyro_z = (int16_t)((int32_t)sign_extend_pair(raw[6], raw[7]) * GYRO_SENS / 100);
+    data->gyro_x = (int32_t)sign_extend_pair(raw[2], raw[3]) * GYRO_SENS / 100;
+    data->gyro_y = (int32_t)sign_extend_pair(raw[4], raw[5]) * GYRO_SENS / 100;
+    data->gyro_z = (int32_t)sign_extend_pair(raw[6], raw[7]) * GYRO_SENS / 100;
 
     /* Accelerometer (raw[8]..raw[13]) */
     data->accel_x = (int16_t)((int32_t)sign_extend_pair(raw[8],  raw[9])  * ACCEL_SENS / 1000);

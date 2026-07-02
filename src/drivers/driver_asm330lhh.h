@@ -5,12 +5,12 @@
 
 /** Raw sensor data from the ASM330LHHTR. */
 struct asm330lhh_data {
-    int16_t accel_x;   /* mg */
+    int16_t accel_x;   /* mg  (±2 g FS → ±2000, fits 16 bits) */
     int16_t accel_y;   /* mg */
     int16_t accel_z;   /* mg */
-    int16_t gyro_x;    /* mdps */
-    int16_t gyro_y;    /* mdps */
-    int16_t gyro_z;    /* mdps */
+    int32_t gyro_x;    /* mdps (±250 dps FS → ±286711, needs 32 bits) */
+    int32_t gyro_y;    /* mdps */
+    int32_t gyro_z;    /* mdps */
     int32_t temp;      /* millideg C */
 };
 
