@@ -41,3 +41,6 @@ npx quartz plugin install   # fetches plugins pinned in quartz.lock.json
 
 GitHub Pages must be set to deploy from the `gh-pages` branch, `/ (root)`
 (repo Settings → Pages → Deploy from a branch).
+
+To replicate this setup for another Obsidian subfolder/project, see
+[PUBLISHING-GUIDE.md](PUBLISHING-GUIDE.md).
