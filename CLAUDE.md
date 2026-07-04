@@ -13,10 +13,12 @@
 ## Commands:
 Load nrf connect sdk terminal for env variables, etc, please do this before any command below other than the RTT reading:
 $ nrfutil sdk-manager toolchain launch --ncs-version v3.3.0 --terminal  
-Build project:
-$ west build -b caterpillar/nrf54l15/cpuapp 
+Build project (use --no-sysbuild: a fresh CLI sysbuild configure fails to
+find the custom board; only VS-Code-extension-created build trees work
+with sysbuild):
+$ west build -b caterpillar/nrf54l15/cpuapp --no-sysbuild
 One-shot non-interactive build (no terminal needed, good for agents/scripts):
-$ nrfutil sdk-manager toolchain launch --ncs-version v3.3.0 -- west build -b caterpillar/nrf54l15/cpuapp
+$ nrfutil sdk-manager toolchain launch --ncs-version v3.3.0 -- west build -b caterpillar/nrf54l15/cpuapp --no-sysbuild
 Flash firmware after a successful build:
 $ west flash --recover
 Load RTT console and connect to the board (makesure to set a timeout of 5 seconds, if there's nothing or returned meaning no output):
