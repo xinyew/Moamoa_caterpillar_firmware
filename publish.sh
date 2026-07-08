@@ -26,8 +26,16 @@ trap 'rm -rf "$STAGE"' EXIT
 cp -R "$VAULT_CONTENT/." "$STAGE/"
 
 # Pull out every wikilink embed target: ![[path/img.png]] or ![[img.png|alt]].
-# `|| true` so a note set with no embeds (grep exits 1) doesn't trip set -e.
-embeds="$(grep -rhoE '!\[\[[^]|#]+' "$VAULT_CONTENT" 2>/dev/null | sed -E 's/^!\[\[//' | sort -u || true)"
+# Strip Obsidian %%...%% and HTML <!-- --> comments first (perl slurps each
+# file whole so comments spanning lines are handled), so an image you comment
+# out to hide it is NOT staged/published. `|| true` so a note set with no
+# embeds (grep exits 1) doesn't trip set -e.
+embeds="$(
+  find "$VAULT_CONTENT" -type f -name '*.md' -print0 2>/dev/null |
+  while IFS= read -r -d '' f; do
+    perl -0777 -pe 's/%%.*?%%//gs; s/<!--.*?-->//gs' "$f"
+  done | grep -oE '!\[\[[^]|#]+' | sed -E 's/^!\[\[//' | sort -u || true
+)"
 if [ -n "$embeds" ]; then
   while IFS= read -r ref; do
     case "${ref##*.}" in
