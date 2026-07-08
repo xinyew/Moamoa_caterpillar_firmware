@@ -26,24 +26,27 @@ trap 'rm -rf "$STAGE"' EXIT
 cp -R "$VAULT_CONTENT/." "$STAGE/"
 
 # Pull out every wikilink embed target: ![[path/img.png]] or ![[img.png|alt]].
-grep -rhoE '!\[\[[^]|#]+' "$VAULT_CONTENT" | sed -E 's/^!\[\[//' | sort -u |
-while IFS= read -r ref; do
-  case "${ref##*.}" in
-    png|jpg|jpeg|gif|webp|svg|bmp|avif|PNG|JPG|JPEG|GIF|WEBP|SVG|BMP|AVIF) ;;
-    *) continue ;;
-  esac
-  src="$VAULT_ROOT/$ref"
-  # Fall back to a vault-wide basename search for bare/moved filenames.
-  [ -f "$src" ] || src="$(find "$VAULT_ROOT" -type f -name "$(basename "$ref")" -print -quit 2>/dev/null)"
-  if [ -n "$src" ] && [ -f "$src" ]; then
-    dest="$STAGE/$ref"
-    mkdir -p "$(dirname "$dest")"
-    cp -f "$src" "$dest"
-    echo "  + asset: $ref"
-  else
-    echo "  ! missing asset (skipped): $ref" >&2
-  fi
-done
+# `|| true` so a note set with no embeds (grep exits 1) doesn't trip set -e.
+embeds="$(grep -rhoE '!\[\[[^]|#]+' "$VAULT_CONTENT" 2>/dev/null | sed -E 's/^!\[\[//' | sort -u || true)"
+if [ -n "$embeds" ]; then
+  while IFS= read -r ref; do
+    case "${ref##*.}" in
+      png|jpg|jpeg|gif|webp|svg|bmp|avif|PNG|JPG|JPEG|GIF|WEBP|SVG|BMP|AVIF) ;;
+      *) continue ;;
+    esac
+    src="$VAULT_ROOT/$ref"
+    # Fall back to a vault-wide basename search for bare/moved filenames.
+    [ -f "$src" ] || src="$(find "$VAULT_ROOT" -type f -name "$(basename "$ref")" -print -quit 2>/dev/null)"
+    if [ -n "$src" ] && [ -f "$src" ]; then
+      dest="$STAGE/$ref"
+      mkdir -p "$(dirname "$dest")"
+      cp -f "$src" "$dest"
+      echo "  + asset: $ref"
+    else
+      echo "  ! missing asset (skipped): $ref" >&2
+    fi
+  done <<< "$embeds"
+fi
 
 npx quartz build -d "$STAGE"
 
