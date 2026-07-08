@@ -128,6 +128,19 @@ plugins:
     enabled: true
   - source: github:quartz-community/explorer
     enabled: true
+    options:
+      # Sort the file explorer by date, newest first (folders stay on top).
+      # Passed as a string; the explorer rebuilds it client-side with `new Function`.
+      # The content index strips the `date` field, but keeps `filePath` — and every
+      # note is named "YYYYMMDD - ...", so reverse-ordering the filePath = newest first.
+      sortFn: |-
+        (a, b) => {
+          if (a.isFolder && !b.isFolder) return -1;
+          if (!a.isFolder && b.isFolder) return 1;
+          const ak = (a.data && a.data.filePath) || a.displayName || "";
+          const bk = (b.data && b.data.filePath) || b.displayName || "";
+          return bk.localeCompare(ak, undefined, { numeric: true, sensitivity: "base" });
+        }
     layout:
       position: left
       priority: 50
