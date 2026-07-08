@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0">
+    <channel>
+      <title>Caterpillar Dev Notes</title>
+      <link>https://xinyew.github.io/Moamoa_caterpillar_firmware</link>
+      <description>Last 10 notes on Caterpillar Dev Notes</description>
+      <generator>Quartz -- quartz.jzhao.xyz</generator>
+      <item>
+    <title>caterpillar</title>
+    <link>https://xinyew.github.io/Moamoa_caterpillar_firmware/tags/caterpillar</link>
+    <guid>https://xinyew.github.io/Moamoa_caterpillar_firmware/tags/caterpillar</guid>
+    <description><![CDATA[  ]]></description>
+    <pubDate>Wed, 08 Jul 2026 04:47:35 GMT</pubDate>
+  </item><item>
+    <title>hardware</title>
+    <link>https://xinyew.github.io/Moamoa_caterpillar_firmware/tags/hardware</link>
+    <guid>https://xinyew.github.io/Moamoa_caterpillar_firmware/tags/hardware</guid>
+    <description><![CDATA[  ]]></description>
+    <pubDate>Wed, 08 Jul 2026 04:47:35 GMT</pubDate>
+  </item><item>
+    <title>kamoamoa</title>
+    <link>https://xinyew.github.io/Moamoa_caterpillar_firmware/tags/kamoamoa</link>
+    <guid>https://xinyew.github.io/Moamoa_caterpillar_firmware/tags/kamoamoa</guid>
+    <description><![CDATA[  ]]></description>
+    <pubDate>Wed, 08 Jul 2026 04:47:35 GMT</pubDate>
+  </item><item>
+    <title>testing</title>
+    <link>https://xinyew.github.io/Moamoa_caterpillar_firmware/tags/testing</link>
+    <guid>https://xinyew.github.io/Moamoa_caterpillar_firmware/tags/testing</guid>
+    <description><![CDATA[  ]]></description>
+    <pubDate>Wed, 08 Jul 2026 04:47:35 GMT</pubDate>
+  </item><item>
+    <title>pcb-design</title>
+    <link>https://xinyew.github.io/Moamoa_caterpillar_firmware/tags/pcb-design</link>
+    <guid>https://xinyew.github.io/Moamoa_caterpillar_firmware/tags/pcb-design</guid>
+    <description><![CDATA[  ]]></description>
+    <pubDate>Wed, 08 Jul 2026 04:47:35 GMT</pubDate>
+  </item><item>
+    <title>firmware</title>
+    <link>https://xinyew.github.io/Moamoa_caterpillar_firmware/tags/firmware</link>
+    <guid>https://xinyew.github.io/Moamoa_caterpillar_firmware/tags/firmware</guid>
+    <description><![CDATA[  ]]></description>
+    <pubDate>Wed, 08 Jul 2026 04:47:35 GMT</pubDate>
+  </item><item>
+    <title>ble</title>
+    <link>https://xinyew.github.io/Moamoa_caterpillar_firmware/tags/ble</link>
+    <guid>https://xinyew.github.io/Moamoa_caterpillar_firmware/tags/ble</guid>
+    <description><![CDATA[  ]]></description>
+    <pubDate>Wed, 08 Jul 2026 04:47:35 GMT</pubDate>
+  </item><item>
+    <title>Tag Index</title>
+    <link>https://xinyew.github.io/Moamoa_caterpillar_firmware/tags/</link>
+    <guid>https://xinyew.github.io/Moamoa_caterpillar_firmware/tags/</guid>
+    <description><![CDATA[  ]]></description>
+    <pubDate>Wed, 08 Jul 2026 04:47:35 GMT</pubDate>
+  </item><item>
+    <title>Caterpillar — Dev Notes</title>
+    <link>https://xinyew.github.io/Moamoa_caterpillar_firmware/</link>
+    <guid>https://xinyew.github.io/Moamoa_caterpillar_firmware/</guid>
+    <description><![CDATA[ Caterpillar (working name) is a small, BLE-controlled vibrotactile board: an nRF54L15 module driving a vibration motor through a DRV8212 H-bridge and an STBB1-APUR boost rail, with an ASM330 IMU and a MAX5419 digital potentiometer that sets the motor voltage. ]]></description>
+    <pubDate>Wed, 08 Jul 2026 04:47:34 GMT</pubDate>
+  </item><item>
+    <title>20260707 - Caterpillar - Rev-2 copper layout and DFM review</title>
+    <link>https://xinyew.github.io/Moamoa_caterpillar_firmware/20260707---caterpillar---rev-2-copper-layout-and-dfm-review</link>
+    <guid>https://xinyew.github.io/Moamoa_caterpillar_firmware/20260707---caterpillar---rev-2-copper-layout-and-dfm-review</guid>
+    <description><![CDATA[ 20260707 - Caterpillar - Rev-2 copper layout and DFM review Rev-2 copper layout completed and hardened, then taken through a full DFM/mechanical review — fab-ready pending gerber export. ]]></description>
+    <pubDate>Tue, 07 Jul 2026 04:00:00 GMT</pubDate>
+  </item>
+    </channel>
+  </rss>
