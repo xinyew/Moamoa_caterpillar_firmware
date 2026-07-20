@@ -12,5 +12,6 @@ target_sources(app PRIVATE
     src/drivers/driver_asm330lhh.c
     src/drivers/max5419.c
     src/drivers/driver_pwm.c
+    src/drivers/driver_led.c
     src/interface/ble_interface.c
 )

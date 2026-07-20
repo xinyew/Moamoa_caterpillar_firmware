@@ -26,22 +26,25 @@ $ & "~\Downloads\SimplicityCommander-Windows\SimplicityCommander-Windows\Command
 
 ## Pin Map
 
-| Pin   | Function         | Notes                        |
-|-------|------------------|------------------------------|
-| P1.02 | I2C SDA          | Shared: IMU + digipot        |
-| P1.03 | I2C SCL          | Shared: IMU + digipot        |
-| P1.04 | IMU INT1 (in)    | ASM330 data-ready            |
-| P1.05 | IMU INT2 (in)    | ASM330 secondary             |
-| P1.06 | ~SLEEP (out)     | DRV8212P, active-low         |
-| P1.07 | PWM CH1 (out)    | DRV8212P IN1                 |
-| P1.08 | PWM CH2 (out)    | DRV8212P IN2                 |
-| P2.03 | DCDC_EN (out)    | STBB1-APUR, active-high      |
+| Pin   | Function         | Notes                               |
+|-------|------------------|-------------------------------------|
+| P0.01 | STATUS LED (out) | Blue, 470R, active-high             |
+| P1.02 | I2C SDA          | Digipot only (`i2c20`)              |
+| P1.03 | I2C SCL          | Digipot only                        |
+| P1.04 | IMU INT1 (in)    | ASM330 data-ready                   |
+| P1.05 | IMU INT2 (in)    | ASM330 secondary                    |
+| P1.06 | ~SLEEP (out)     | DRV8212P, active-low                |
+| P1.07 | PWM CH1 (out)    | DRV8212P IN1                        |
+| P1.08 | PWM CH2 (out)    | DRV8212P IN2                        |
+| P1.09 | SPI CS (out)     | ASM330, active-low (GPIO-driven)    |
+| P1.10 | SPI SCLK (out)   | ASM330 (`spi21`)                    |
+| P1.13 | SPI MOSI (out)   | ASM330 SDI                          |
+| P1.14 | SPI MISO (in)    | ASM330 SDO                          |
+| P2.03 | DCDC_EN (out)    | STBB1-APUR, active-high             |
 
 ## I2C Addresses (7-bit)
 
-- ASM330LHHTR: `0x6A` (SA0=0)
-- MAX5419LETA: `0x28` (A0=0)
-
+- MAX5419LETA: `0x28` (A0=0) — only device on i2c20 (IMU is on SPI)
 
 ## SOC components to use
-i2c20 and pwm20, bunch of gpios
+i2c20 (digipot), spi21 (IMU), pwm20, bunch of gpios

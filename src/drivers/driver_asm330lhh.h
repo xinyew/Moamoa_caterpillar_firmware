@@ -15,10 +15,11 @@ struct asm330lhh_data {
 };
 
 /**
- * @brief Initialize the ASM330LHHTR IMU on I2C20.
+ * @brief Initialize the ASM330LHHTR IMU on spi21 (CS = P1.09).
  *
  * Verifies WHO_AM_I, configures accelerometer at 12.5 Hz ±2 g and
- * gyroscope at 12.5 Hz ±250 dps with block-data-update enabled.
+ * gyroscope at 12.5 Hz ±250 dps with block-data-update enabled,
+ * and disables the sensor's unused I2C interface.
  *
  * @return 0 on success, negative errno on failure.
  */

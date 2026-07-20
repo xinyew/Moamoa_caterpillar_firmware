@@ -6,10 +6,19 @@
 	};
 };
 
+/* Digipot (MAX5419) only — the IMU moved to spi21 */
 &i2c20 {
 	status = "okay";
 	pinctrl-0 = <&i2c20_default>;
 	pinctrl-1 = <&i2c20_sleep>;
+	pinctrl-names = "default", "sleep";
+};
+
+/* IMU (ASM330LHHTR).  CS is P1.09, driven as a GPIO by the IMU driver. */
+&spi21 {
+	status = "okay";
+	pinctrl-0 = <&spi21_default>;
+	pinctrl-1 = <&spi21_sleep>;
 	pinctrl-names = "default", "sleep";
 };
 

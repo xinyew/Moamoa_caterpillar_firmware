@@ -1,25 +1,36 @@
 /*
  * ASM330LHHTR 6-axis IMU — register-level driver.
  *
- * Communicates over I2C20 at address 0x6A (SA0 = 0).
+ * Communicates over SPI (spi21, mode 3, 8 MHz):
+ *   SCLK P1.10, MOSI→SDI P1.13, MISO←SDO P1.14, CS P1.09 (GPIO, active-low)
  * Accelerometer: 12.5 Hz, ±2 g
  * Gyroscope:     12.5 Hz, ±250 dps
  */
 
 #include "driver_asm330lhh.h"
 
-#include <zephyr/drivers/i2c.h>
+#include <zephyr/drivers/spi.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/logging/log.h>
 
 LOG_MODULE_REGISTER(drv_asm330lhh, LOG_LEVEL_DBG);
 
 /* -------------------------------------------------------------------------- */
-/*  I2C                                                                       */
+/*  SPI bus                                                                   */
 /* -------------------------------------------------------------------------- */
 
-#define IMU_I2C         DEVICE_DT_GET(DT_NODELABEL(i2c20))
-#define IMU_ADDR        0x6A
+#define IMU_SPI         DEVICE_DT_GET(DT_NODELABEL(spi21))
+
+/* CS on P1.09 — driven manually so the bus config stays trivial */
+#define CS_PORT         DEVICE_DT_GET(DT_NODELABEL(gpio1))
+#define CS_PIN          9
+
+/* Mode 3 (CPOL=1, CPHA=1); 8 MHz is SPIM21's max, sensor allows 10 MHz */
+static const struct spi_config spi_cfg = {
+    .frequency = 8000000U,
+    .operation = SPI_OP_MODE_MASTER | SPI_WORD_SET(8) | SPI_TRANSFER_MSB |
+                 SPI_MODE_CPOL | SPI_MODE_CPHA,
+};
 
 /* -------------------------------------------------------------------------- */
 /*  Register map                                                              */
@@ -30,6 +41,7 @@ LOG_MODULE_REGISTER(drv_asm330lhh, LOG_LEVEL_DBG);
 #define REG_CTRL1_XL    0x10
 #define REG_CTRL2_G     0x11
 #define REG_CTRL3_C     0x12
+#define REG_CTRL4_C     0x13
 #define REG_OUT_TEMP_L  0x20
 
 #define WHO_AM_I_EXPECT 0x6B
@@ -42,6 +54,9 @@ LOG_MODULE_REGISTER(drv_asm330lhh, LOG_LEVEL_DBG);
 
 /* CTRL3_C: BDU (bit 6) + IF_INC (bit 2) — latch L/H, auto-increment addr */
 #define CTRL3_C_VAL     0x44
+
+/* CTRL4_C: I2C_disable (bit 2) — SPI-only, ignore noise on the I2C pads */
+#define CTRL4_C_VAL     0x04
 
 /* INT1_CTRL: route gyro data-ready to the INT1 pad (bit 1) */
 #define INT1_CTRL_VAL   0x02
@@ -58,22 +73,38 @@ LOG_MODULE_REGISTER(drv_asm330lhh, LOG_LEVEL_DBG);
 /*  Helpers                                                                   */
 /* -------------------------------------------------------------------------- */
 
+/* SPI first byte: bit 7 = read flag, bits 6..0 = register address */
+#define SPI_READ_BIT    0x80
+
+static int spi_xfer(const struct spi_buf_set *tx, const struct spi_buf_set *rx)
+{
+    gpio_pin_set_raw(CS_PORT, CS_PIN, 0);
+    int ret = spi_transceive(IMU_SPI, &spi_cfg, tx, rx);
+    gpio_pin_set_raw(CS_PORT, CS_PIN, 1);
+    return ret;
+}
+
 static int reg_write(uint8_t reg, uint8_t val)
 {
-    uint8_t buf[2] = {reg, val};
-    return i2c_write(IMU_I2C, buf, 2, IMU_ADDR);
+    uint8_t tx[2] = { (uint8_t)(reg & 0x7F), val };
+    const struct spi_buf tb = { .buf = tx, .len = sizeof(tx) };
+    const struct spi_buf_set txs = { .buffers = &tb, .count = 1 };
+
+    return spi_xfer(&txs, NULL);
 }
 
 static int reg_read(uint8_t reg, uint8_t *buf, size_t len)
 {
-    return i2c_write_read(IMU_I2C, IMU_ADDR, &reg, 1, buf, len);
-}
+    uint8_t addr = (uint8_t)(reg | SPI_READ_BIT);
+    const struct spi_buf tb = { .buf = &addr, .len = 1 };
+    const struct spi_buf_set txs = { .buffers = &tb, .count = 1 };
+    struct spi_buf rb[2] = {
+        { .buf = NULL, .len = 1 },   /* discard byte clocked with the address */
+        { .buf = buf,  .len = len },
+    };
+    const struct spi_buf_set rxs = { .buffers = rb, .count = 2 };
 
-/** Quick probe: read 1 byte.  Returns 0 if the device ACKs its address. */
-static int i2c_ping(uint8_t addr)
-{
-    uint8_t dummy;
-    return i2c_read(IMU_I2C, &dummy, 1, addr);
+    return spi_xfer(&txs, &rxs);
 }
 
 static int16_t sign_extend_pair(uint8_t l, uint8_t h)
@@ -101,11 +132,6 @@ static int drdy_int_setup(void)
 {
     int ret;
 
-    if (!device_is_ready(INT1_PORT)) {
-        LOG_ERR("GPIO1 not ready");
-        return -ENODEV;
-    }
-
     ret = gpio_pin_configure(INT1_PORT, INT1_PIN, GPIO_INPUT);
     if (ret == 0) {
         gpio_init_callback(&drdy_cb, drdy_isr, BIT(INT1_PIN));
@@ -127,20 +153,23 @@ int drv_asm330lhh_init(void)
     uint8_t whoami = 0;
     int ret;
 
-    if (!device_is_ready(IMU_I2C)) {
-        LOG_ERR("I2C20 not ready");
+    if (!device_is_ready(IMU_SPI)) {
+        LOG_ERR("SPI21 not ready");
+        return -ENODEV;
+    }
+    if (!device_is_ready(CS_PORT)) {
+        LOG_ERR("GPIO1 not ready");
         return -ENODEV;
     }
 
-    /* Probe ASM330LHHTR IMU at 0x6A */
-    ret = i2c_ping(IMU_ADDR);
-    if (ret != 0) {
-        LOG_ERR("ASM330LHHTR @0x%02X: NAK (%d)", IMU_ADDR, ret);
+    /* CS idle-high before the first clock edge */
+    ret = gpio_pin_configure(CS_PORT, CS_PIN, GPIO_OUTPUT_HIGH);
+    if (ret < 0) {
+        LOG_ERR("CS (P1.09) config failed: %d", ret);
         return ret;
     }
-    LOG_INF("ASM330LHHTR @0x%02X: ACK", IMU_ADDR);
 
-    /* Read WHO_AM_I to confirm it's the right chip */
+    /* Read WHO_AM_I to confirm the chip is alive on the bus */
     ret = reg_read(REG_WHO_AM_I, &whoami, 1);
     if (ret < 0) {
         LOG_ERR("WHO_AM_I read failed: %d", ret);
@@ -151,7 +180,7 @@ int drv_asm330lhh_init(void)
                 whoami, WHO_AM_I_EXPECT);
         return -EIO;
     }
-    LOG_INF("ASM330LHHTR at 0x%02X (WHO_AM_I=0x%02X)", IMU_ADDR, whoami);
+    LOG_INF("ASM330LHHTR on spi21 (WHO_AM_I=0x%02X)", whoami);
 
     /* Configure accelerometer */
     ret = reg_write(REG_CTRL1_XL, CTRL1_XL_VAL);
@@ -164,6 +193,10 @@ int drv_asm330lhh_init(void)
     /* Enable block-data-update */
     ret = reg_write(REG_CTRL3_C, CTRL3_C_VAL);
     if (ret < 0) { LOG_ERR("CTRL3_C: %d", ret); return ret; }
+
+    /* SPI-only from here on — shut the unused I2C interface off */
+    ret = reg_write(REG_CTRL4_C, CTRL4_C_VAL);
+    if (ret < 0) { LOG_ERR("CTRL4_C: %d", ret); return ret; }
 
     /* Route gyro data-ready to INT1 and arm the P1.04 interrupt */
     ret = reg_write(REG_INT1_CTRL, INT1_CTRL_VAL);

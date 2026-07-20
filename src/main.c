@@ -12,6 +12,7 @@
 #include "drivers/driver_asm330lhh.h"
 #include "drivers/max5419.h"
 #include "drivers/driver_pwm.h"
+#include "drivers/driver_led.h"
 #include "interface/ble_interface.h"
 
 LOG_MODULE_REGISTER(caterpillar_main, LOG_LEVEL_DBG);
@@ -22,9 +23,17 @@ LOG_MODULE_REGISTER(caterpillar_main, LOG_LEVEL_DBG);
  */
 #define MOTOR_VDC_V  3.1f
 
+/* Heartbeat half-period: LED toggles this often while the loop runs */
+#define HEARTBEAT_MS  500
+
 int main(void)
 {
     printk("\n=== Caterpillar Boot ===\n");
+
+    /* Status LED on — power/boot indicator until the heartbeat starts */
+    if (drv_led_init() < 0) {
+        LOG_ERR("Failed to init status LED");
+    }
 
     /* MAX5419LETA digipot — program VDC feedback before DCDC enable */
     bool vdc_ok = (max5419_init() == 0) &&
@@ -66,7 +75,17 @@ int main(void)
     }
 
     uint32_t tick = 0;
+    int64_t last_beat = k_uptime_get();
     while (1) {
+        /* Heartbeat — before the IMU wait/continue so a dead IMU
+         * cannot starve the blink.
+         */
+        int64_t now = k_uptime_get();
+        if (now - last_beat >= HEARTBEAT_MS) {
+            drv_led_toggle();
+            last_beat = now;
+        }
+
         /* Paced by the IMU data-ready interrupt (12.5 Hz).  The timeout
          * keeps the loop alive if the IMU is absent or wedged.
          */
