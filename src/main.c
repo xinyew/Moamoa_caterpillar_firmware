@@ -13,6 +13,7 @@
 #include "drivers/max5419.h"
 #include "drivers/driver_pwm.h"
 #include "drivers/driver_led.h"
+#include "drivers/driver_vdc_sense.h"
 #include "interface/ble_interface.h"
 
 LOG_MODULE_REGISTER(caterpillar_main, LOG_LEVEL_DBG);
@@ -33,6 +34,11 @@ int main(void)
     /* Status LED on — power/boot indicator until the heartbeat starts */
     if (drv_led_init() < 0) {
         LOG_ERR("Failed to init status LED");
+    }
+
+    /* VDC sense ADC (AIN4 / P1.11) */
+    if (drv_vdc_sense_init() < 0) {
+        LOG_ERR("Failed to init VDC sense");
     }
 
     /* MAX5419LETA digipot — program VDC feedback before DCDC enable */
@@ -61,6 +67,14 @@ int main(void)
      * Remove this to keep the motor idle until commanded over BLE.
      */
     if (vdc_ok) {
+        /* Converter settle, then verify the rail against the target */
+        k_msleep(50);
+        int32_t vdc_mv = 0;
+        if (drv_vdc_sense_read_mv(&vdc_mv) == 0) {
+            LOG_INF("VDC measured: %d mV (target %d mV)",
+                    vdc_mv, (int)(MOTOR_VDC_V * 1000.0f));
+        }
+
         drv_pwm_set_duty(0, 50);
     }
 

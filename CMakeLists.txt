@@ -13,5 +13,6 @@ target_sources(app PRIVATE
     src/drivers/max5419.c
     src/drivers/driver_pwm.c
     src/drivers/driver_led.c
+    src/drivers/driver_vdc_sense.c
     src/interface/ble_interface.c
 )

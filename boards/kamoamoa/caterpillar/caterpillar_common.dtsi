@@ -1,8 +1,33 @@
 #include "caterpillar_nrf54l15-pinctrl.dtsi"
+#include <zephyr/dt-bindings/adc/adc.h>
+#include <zephyr/dt-bindings/adc/nrf-adc.h>
 
 / {
 	aliases {
 		watchdog0 = &wdt31;
+	};
+
+	zephyr,user {
+		io-channels = <&adc 0>;
+	};
+};
+
+/* VDC sense: motor rail → 100k/100k divider → AIN4 (P1.11), 100nF filter.
+ * Gain 1/4 on the 0.9 V internal reference = 3.6 V full scale at the pin;
+ * long acquisition time for the 50 kΩ divider source impedance.
+ */
+&adc {
+	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	channel@0 {
+		reg = <0>;
+		zephyr,gain = "ADC_GAIN_1_4";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME(ADC_ACQ_TIME_MICROSECONDS, 20)>;
+		zephyr,input-positive = <NRF_SAADC_AIN4>;
+		zephyr,resolution = <12>;
 	};
 };
 

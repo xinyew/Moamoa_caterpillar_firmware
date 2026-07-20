@@ -1,17 +1,19 @@
 /*
  * BLE interface — GATT server for PWM frequency control.
  *
- * Advertises as "Caterpillar", exposes two writable characteristics
- * (both 16-bit little-endian, accepting acknowledged Write Requests
- * as well as Write-Without-Response):
- *   0xFFE1 — PWM frequency in Hz    (4–1000) → drv_pwm_set_frequency()
- *   0xFFE2 — motor rail VDC in mV (750–4200) → max5419_set_voltage()
+ * Advertises as "Caterpillar" (all values 16-bit little-endian):
+ *   0xFFE1 — write: PWM frequency in Hz    (4–1000) → drv_pwm_set_frequency()
+ *   0xFFE2 — write: motor rail VDC in mV (750–4200) → max5419_set_voltage()
+ *   0xFFE3 — read:  measured VDC in mV (AIN4 sense divider)
+ * Writes accept acknowledged Write Requests as well as
+ * Write-Without-Response.
  */
 
 #include "ble_interface.h"
 
 #include "../drivers/driver_pwm.h"
 #include "../drivers/max5419.h"
+#include "../drivers/driver_vdc_sense.h"
 
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/conn.h>
@@ -27,13 +29,16 @@ LOG_MODULE_REGISTER(ble_if, LOG_LEVEL_INF);
 /* -------------------------------------------------------------------------- */
 
 /* 16-bit custom vendor UUIDs */
-#define BT_UUID_CATERPILLAR_SVC_VAL   0xFFE0
-#define BT_UUID_CATERPILLAR_FREQ_VAL  0xFFE1
-#define BT_UUID_CATERPILLAR_VOLT_VAL  0xFFE2
+#define BT_UUID_CATERPILLAR_SVC_VAL     0xFFE0
+#define BT_UUID_CATERPILLAR_FREQ_VAL    0xFFE1
+#define BT_UUID_CATERPILLAR_VOLT_VAL    0xFFE2
+#define BT_UUID_CATERPILLAR_VDCMEAS_VAL 0xFFE3
 
 #define BT_UUID_CATERPILLAR_SVC  BT_UUID_DECLARE_16(BT_UUID_CATERPILLAR_SVC_VAL)
 #define BT_UUID_CATERPILLAR_FREQ BT_UUID_DECLARE_16(BT_UUID_CATERPILLAR_FREQ_VAL)
 #define BT_UUID_CATERPILLAR_VOLT BT_UUID_DECLARE_16(BT_UUID_CATERPILLAR_VOLT_VAL)
+#define BT_UUID_CATERPILLAR_VDCMEAS \
+    BT_UUID_DECLARE_16(BT_UUID_CATERPILLAR_VDCMEAS_VAL)
 
 /* -------------------------------------------------------------------------- */
 /*  Advertising data                                                          */
@@ -108,8 +113,35 @@ static ssize_t on_volt_write(struct bt_conn *conn,
         return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
     }
 
-    LOG_INF("BLE: VDC -> %u mV", mv);
+    /* Read back the rail after the ramp settles, for the log */
+    k_msleep(20);
+    int32_t meas_mv = 0;
+    if (drv_vdc_sense_read_mv(&meas_mv) == 0) {
+        LOG_INF("BLE: VDC -> %u mV (measured %d mV)", mv, meas_mv);
+    } else {
+        LOG_INF("BLE: VDC -> %u mV", mv);
+    }
     return len;
+}
+
+/* -------------------------------------------------------------------------- */
+/*  GATT characteristic — measured VDC (read)                                 */
+/* -------------------------------------------------------------------------- */
+
+static ssize_t on_vdc_read(struct bt_conn *conn,
+                           const struct bt_gatt_attr *attr,
+                           void *buf, uint16_t len, uint16_t offset)
+{
+    int32_t mv = 0;
+
+    if (drv_vdc_sense_read_mv(&mv) < 0) {
+        return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
+    }
+
+    uint16_t v = (uint16_t)CLAMP(mv, 0, UINT16_MAX);
+    uint8_t le[2] = { (uint8_t)(v & 0xFF), (uint8_t)(v >> 8) };
+
+    return bt_gatt_attr_read(conn, attr, buf, len, offset, le, sizeof(le));
 }
 
 /* -------------------------------------------------------------------------- */
@@ -126,6 +158,10 @@ BT_GATT_SERVICE_DEFINE(caterpillar_svc,
         BT_GATT_CHRC_WRITE | BT_GATT_CHRC_WRITE_WITHOUT_RESP,
         BT_GATT_PERM_WRITE,
         NULL, on_volt_write, NULL),
+    BT_GATT_CHARACTERISTIC(BT_UUID_CATERPILLAR_VDCMEAS,
+        BT_GATT_CHRC_READ,
+        BT_GATT_PERM_READ,
+        on_vdc_read, NULL, NULL),
 );
 
 /* -------------------------------------------------------------------------- */

@@ -29,10 +29,11 @@ import sys
 from bleak import BleakClient, BleakScanner
 
 # Must match firmware — see ble_interface.c
-SERVICE_UUID   = "0000ffe0-0000-1000-8000-00805f9b34fb"
-CHAR_UUID_FREQ = "0000ffe1-0000-1000-8000-00805f9b34fb"
-CHAR_UUID_VOLT = "0000ffe2-0000-1000-8000-00805f9b34fb"
-DEVICE_NAME    = "Caterpillar"
+SERVICE_UUID      = "0000ffe0-0000-1000-8000-00805f9b34fb"
+CHAR_UUID_FREQ    = "0000ffe1-0000-1000-8000-00805f9b34fb"
+CHAR_UUID_VOLT    = "0000ffe2-0000-1000-8000-00805f9b34fb"
+CHAR_UUID_VDCMEAS = "0000ffe3-0000-1000-8000-00805f9b34fb"
+DEVICE_NAME       = "Caterpillar"
 
 # Must match firmware (driver_pwm.h): nRF54 PWM cannot go below ~4 Hz
 FREQ_MIN = 4
@@ -88,7 +89,16 @@ async def send_volt(client: BleakClient, volts: float, ack: bool):
           f"{' (acked)' if ack else ''}", flush=True)
 
 
-async def one_shot(address: str, hz: int | None, volts: float | None):
+async def read_vdc(client: BleakClient):
+    """Read the measured motor rail voltage (AIN4 sense divider)."""
+    data = await client.read_gatt_char(CHAR_UUID_VDCMEAS)
+    mv = struct.unpack("<H", data)[0]
+    print(f"Measured VDC: {mv} mV", flush=True)
+    return mv
+
+
+async def one_shot(address: str, hz: int | None, volts: float | None,
+                   read: bool):
     """Connect, apply the requested settings (acknowledged), disconnect."""
     print(f"Connecting to {address} ...", flush=True)
     async with BleakClient(address) as client:
@@ -97,12 +107,15 @@ async def one_shot(address: str, hz: int | None, volts: float | None):
             await send_volt(client, volts, ack=True)
         if hz is not None:
             await send_freq(client, hz, ack=True)
+        if read or volts is not None:
+            await read_vdc(client)
 
 
 async def interactive(address: str):
     """REPL loop for frequency / voltage changes."""
     print(f"Enter frequency in Hz ({FREQ_MIN}–{FREQ_MAX}),")
-    print(f"or 'v <volts>' to set VDC ({VOLT_MIN}–{VOLT_MAX} V), or 'q' to quit.")
+    print(f"'v <volts>' to set VDC ({VOLT_MIN}–{VOLT_MAX} V),")
+    print("'r' to read measured VDC, or 'q' to quit.")
     print("Changes apply instantly via Write Without Response.\n")
 
     async with BleakClient(address) as client:
@@ -118,6 +131,10 @@ async def interactive(address: str):
                 break
 
             if not cmd:
+                continue
+
+            if cmd.lower() == "r":
+                await read_vdc(client)
                 continue
 
             if cmd.lower().startswith("v"):
@@ -153,6 +170,8 @@ async def main():
     parser.add_argument("-V", "--V", "--volt", dest="volt", type=float,
                         default=None,
                         help="Motor rail voltage in volts (one-shot mode)")
+    parser.add_argument("-r", "--read", action="store_true",
+                        help="Read measured VDC (one-shot mode)")
     args = parser.parse_args()
 
     if args.freq is not None and not (FREQ_MIN <= args.freq <= FREQ_MAX):
@@ -169,9 +188,9 @@ async def main():
     if address is None:
         sys.exit(1)
 
-    if args.freq is not None or args.volt is not None:
+    if args.freq is not None or args.volt is not None or args.read:
         try:
-            await one_shot(address, args.freq, args.volt)
+            await one_shot(address, args.freq, args.volt, args.read)
         except Exception as e:
             print(f"Write failed: {e}", file=sys.stderr)
             sys.exit(1)
