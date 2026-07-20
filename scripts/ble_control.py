@@ -33,6 +33,7 @@ SERVICE_UUID      = "0000ffe0-0000-1000-8000-00805f9b34fb"
 CHAR_UUID_FREQ    = "0000ffe1-0000-1000-8000-00805f9b34fb"
 CHAR_UUID_VOLT    = "0000ffe2-0000-1000-8000-00805f9b34fb"
 CHAR_UUID_VDCMEAS = "0000ffe3-0000-1000-8000-00805f9b34fb"
+CHAR_UUID_RAIL    = "0000ffe4-0000-1000-8000-00805f9b34fb"
 DEVICE_NAME       = "Caterpillar"
 
 # Must match firmware (driver_pwm.h): nRF54 PWM cannot go below ~4 Hz
@@ -89,6 +90,13 @@ async def send_volt(client: BleakClient, volts: float, ack: bool):
           f"{' (acked)' if ack else ''}", flush=True)
 
 
+async def send_rail(client: BleakClient, on: bool, ack: bool):
+    await client.write_gatt_char(CHAR_UUID_RAIL, bytes([1 if on else 0]),
+                                 response=ack)
+    print(f"Motor rail -> {'ON' if on else 'OFF'}"
+          f"{' (acked)' if ack else ''}", flush=True)
+
+
 async def read_vdc(client: BleakClient):
     """Read the measured motor rail voltage (AIN4 sense divider)."""
     data = await client.read_gatt_char(CHAR_UUID_VDCMEAS)
@@ -98,11 +106,14 @@ async def read_vdc(client: BleakClient):
 
 
 async def one_shot(address: str, hz: int | None, volts: float | None,
-                   read: bool):
+                   read: bool, rail: int | None):
     """Connect, apply the requested settings (acknowledged), disconnect."""
     print(f"Connecting to {address} ...", flush=True)
     async with BleakClient(address) as client:
         print(f"Connected (MTU={client.mtu_size})", flush=True)
+        if rail is not None:
+            await send_rail(client, rail != 0, ack=True)
+            await asyncio.sleep(0.1)   # let the rail settle before reading
         if volts is not None:
             await send_volt(client, volts, ack=True)
         if hz is not None:
@@ -135,6 +146,10 @@ async def interactive(address: str):
 
             if cmd.lower() == "r":
                 await read_vdc(client)
+                continue
+
+            if cmd.lower() in ("on", "off"):
+                await send_rail(client, cmd.lower() == "on", ack=False)
                 continue
 
             if cmd.lower().startswith("v"):
@@ -172,6 +187,8 @@ async def main():
                         help="Motor rail voltage in volts (one-shot mode)")
     parser.add_argument("-r", "--read", action="store_true",
                         help="Read measured VDC (one-shot mode)")
+    parser.add_argument("--rail", type=int, choices=[0, 1], default=None,
+                        help="Motor rail enable: 0=off, 1=on (one-shot mode)")
     args = parser.parse_args()
 
     if args.freq is not None and not (FREQ_MIN <= args.freq <= FREQ_MAX):
@@ -188,9 +205,10 @@ async def main():
     if address is None:
         sys.exit(1)
 
-    if args.freq is not None or args.volt is not None or args.read:
+    if (args.freq is not None or args.volt is not None or args.read
+            or args.rail is not None):
         try:
-            await one_shot(address, args.freq, args.volt, args.read)
+            await one_shot(address, args.freq, args.volt, args.read, args.rail)
         except Exception as e:
             print(f"Write failed: {e}", file=sys.stderr)
             sys.exit(1)

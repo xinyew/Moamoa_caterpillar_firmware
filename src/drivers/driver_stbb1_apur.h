@@ -12,4 +12,15 @@
  */
 int drv_stbb1_apur_init(void);
 
+/**
+ * @brief Enable or disable the motor rail (drives P2.03).
+ *
+ * Note: a healthy STBB1 has true output disconnect, so disable should
+ * drop VDC to ~0.  VDC staying near VBATT − 0.7 V while disabled
+ * indicates a passive path through the converter (damaged input FET).
+ *
+ * @param enable  true = converter on, false = off.
+ */
+void drv_stbb1_apur_set(bool enable);
+
 #endif /* DRIVER_STBB1_APUR_H */

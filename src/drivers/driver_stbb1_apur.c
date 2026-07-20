@@ -53,3 +53,9 @@ int drv_stbb1_apur_init(void)
 
     return 0;
 }
+
+void drv_stbb1_apur_set(bool enable)
+{
+    gpio_pin_set_raw(DCDC_EN_PORT, DCDC_EN_PIN, enable ? 1 : 0);
+    LOG_INF("STBB1-APUR DCDC_EN -> %s", enable ? "ON" : "OFF");
+}
