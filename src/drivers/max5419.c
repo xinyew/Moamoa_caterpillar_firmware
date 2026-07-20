@@ -42,17 +42,24 @@ LOG_MODULE_REGISTER(max5419, LOG_LEVEL_INF);
 #define CMD_V2NV        0x29  /* Copy volatile → NV (save wiper permanently) */
 
 /*
- * Output-voltage safety limit (mV value shared via max5419.h).
+ * Feedback network (hardware rev3):
+ *   VDC → R4 100k → FB → R9 12.1k → digipot H..W (0..200k) → GND
  *
- * The digipot is the BOTTOM leg of the STBB1-APUR feedback divider, so
- * raising the tap lowers R_HW and raises Vout — tap = 255 shorts FB to
- * GND and the converter boosts toward its 5.5 V maximum into the motor.
- * Cap all requests well below that.
+ * Vout = 0.5 × (1 + 100 / (12.1 + R_HW))     [kΩ]
+ * R_HW = 200 × (255 − tap) / 255
+ *
+ * R9 hardware-bounds Vout to ≈4.63 V even at tap 255 (no more
+ * boost-runaway to 5.5 V), and tap 0 gives the ≈0.74 V minimum.
  */
+#define R_TOP_K         100.0f   /* R4: VDC → FB */
+#define R_SERIES_K      12.1f    /* R9: FB → digipot H */
+#define R_POT_K         200.0f   /* digipot end-to-end */
+
+/* Output-voltage safety limit (mV value shared via max5419.h) */
 #define VOUT_MAX_V      ((float)MAX5419_VOUT_MAX_MV / 1000.0f)
 
-/* Highest tap that keeps Vout <= VOUT_MAX_V: tap = 255 - 127.5/(2V - 1) */
-#define TAP_MAX         237
+/* Highest tap that keeps Vout <= VOUT_MAX_V (4.2 V → tap 253) */
+#define TAP_MAX         253
 
 /* Delay between single-tap steps when ramping to a new voltage */
 #define RAMP_STEP_MS    10
@@ -150,7 +157,11 @@ int max5419_set_voltage(float voltage)
         return -EINVAL;
     }
 
-    float tap_f = 255.0f - 127.5f / den;
+    /* Bottom leg needed for the target, minus the fixed series part */
+    float bottom_k = R_TOP_K / den;
+    float rhw_k = bottom_k - R_SERIES_K;
+
+    float tap_f = 255.0f - rhw_k * (255.0f / R_POT_K);
 
     /* Clamp to valid wiper range */
     if (tap_f < 0.0f) {
