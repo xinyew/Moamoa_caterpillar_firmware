@@ -1,8 +1,8 @@
 /*
  * Status LED driver — blue LED on P0.01 (active-high, 470R series).
  *
- * The main loop heartbeat-blinks it (~1 Hz) so a running board is
- * distinguishable from a hung or reset-looping one without RTT.
+ * Runs a triple-flash pattern (3 × 3 ms blinks per second) on a kernel
+ * timer, so the blink cadence is independent of main-loop pacing.
  */
 
 #include "driver_led.h"
@@ -14,6 +14,43 @@ LOG_MODULE_REGISTER(drv_led, LOG_LEVEL_INF);
 
 #define LED_PORT  DEVICE_DT_GET(DT_NODELABEL(gpio0))
 #define LED_PIN   1
+
+/* -------------------------------------------------------------------------- */
+/*  Blink pattern — 3 short flashes, then dark until the 1 s period ends      */
+/* -------------------------------------------------------------------------- */
+
+#define FLASH_ON_MS    3
+#define FLASH_GAP_MS   100
+#define PERIOD_MS      1000
+
+struct blink_step {
+    uint8_t  on;
+    uint16_t ms;
+};
+
+static const struct blink_step pattern[] = {
+    { 1, FLASH_ON_MS },
+    { 0, FLASH_GAP_MS },
+    { 1, FLASH_ON_MS },
+    { 0, FLASH_GAP_MS },
+    { 1, FLASH_ON_MS },
+    { 0, PERIOD_MS - 3 * FLASH_ON_MS - 2 * FLASH_GAP_MS },
+};
+
+static size_t step_idx;
+
+static void blink_timer_fn(struct k_timer *timer)
+{
+    step_idx = (step_idx + 1) % ARRAY_SIZE(pattern);
+    gpio_pin_set_raw(LED_PORT, LED_PIN, pattern[step_idx].on);
+    k_timer_start(timer, K_MSEC(pattern[step_idx].ms), K_NO_WAIT);
+}
+
+static K_TIMER_DEFINE(blink_timer, blink_timer_fn, NULL);
+
+/* -------------------------------------------------------------------------- */
+/*  Public API                                                                */
+/* -------------------------------------------------------------------------- */
 
 int drv_led_init(void)
 {
@@ -32,8 +69,16 @@ int drv_led_init(void)
     return 0;
 }
 
+void drv_led_blink_start(void)
+{
+    step_idx = 0;
+    gpio_pin_set_raw(LED_PORT, LED_PIN, pattern[0].on);
+    k_timer_start(&blink_timer, K_MSEC(pattern[0].ms), K_NO_WAIT);
+}
+
 void drv_led_set(bool on)
 {
+    k_timer_stop(&blink_timer);
     gpio_pin_set_raw(LED_PORT, LED_PIN, on ? 1 : 0);
 }
 

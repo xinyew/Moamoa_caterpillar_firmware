@@ -24,9 +24,6 @@ LOG_MODULE_REGISTER(caterpillar_main, LOG_LEVEL_DBG);
  */
 #define MOTOR_VDC_V  3.1f
 
-/* Heartbeat half-period: LED toggles this often while the loop runs */
-#define HEARTBEAT_MS  500
-
 int main(void)
 {
     printk("\n=== Caterpillar Boot ===\n");
@@ -88,18 +85,11 @@ int main(void)
         LOG_ERR("Failed to init IMU");
     }
 
-    uint32_t tick = 0;
-    int64_t last_beat = k_uptime_get();
-    while (1) {
-        /* Heartbeat — before the IMU wait/continue so a dead IMU
-         * cannot starve the blink.
-         */
-        int64_t now = k_uptime_get();
-        if (now - last_beat >= HEARTBEAT_MS) {
-            drv_led_toggle();
-            last_beat = now;
-        }
+    /* Alive indicator: 3 × 3 ms flashes per second (timer-driven) */
+    drv_led_blink_start();
 
+    uint32_t tick = 0;
+    while (1) {
         /* Paced by the IMU data-ready interrupt (12.5 Hz).  The timeout
          * keeps the loop alive if the IMU is absent or wedged.
          */
