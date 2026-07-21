@@ -6,6 +6,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/sys/printk.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/drivers/hwinfo.h>
 
 #include "drivers/driver_stbb1_apur.h"
 #include "drivers/driver_drv8212.h"
@@ -27,6 +28,20 @@ LOG_MODULE_REGISTER(caterpillar_main, LOG_LEVEL_DBG);
 int main(void)
 {
     printk("\n=== Caterpillar Boot ===\n");
+
+    /* Announce why we booted — makes brown-out reset loops visible
+     * (a silent reset shows as ~65 ms of motor dropout otherwise).
+     */
+    uint32_t reset_cause = 0;
+    if (hwinfo_get_reset_cause(&reset_cause) == 0) {
+        LOG_INF("Reset cause: 0x%08x%s%s%s%s%s", reset_cause,
+                (reset_cause & RESET_POR)      ? " POR/brownout" : "",
+                (reset_cause & RESET_PIN)      ? " pin"          : "",
+                (reset_cause & RESET_SOFTWARE) ? " soft"         : "",
+                (reset_cause & RESET_WATCHDOG) ? " watchdog"     : "",
+                (reset_cause & RESET_DEBUG)    ? " debug"        : "");
+        (void)hwinfo_clear_reset_cause();
+    }
 
     /* Status LED on — power/boot indicator until the heartbeat starts */
     if (drv_led_init() < 0) {
