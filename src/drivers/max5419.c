@@ -86,8 +86,18 @@ int max5419_init(void)
      * Probe by writing a 0-byte transaction (address-only).
      * We cannot use reads because the MAX5419 NOP/W bit means
      * "no-operation", not "read".
+     * Retry a few times: a cold-boot NAK here would leave the motor
+     * rail disabled for the whole session (seen once after an OTA).
      */
-    int ret = i2c_write(i2c_dev, NULL, 0, MAX5419_I2C_ADDR);
+    int ret = -EIO;
+    for (int attempt = 0; attempt < 3; attempt++) {
+        ret = i2c_write(i2c_dev, NULL, 0, MAX5419_I2C_ADDR);
+        if (ret == 0) {
+            break;
+        }
+        LOG_WRN("MAX5419 probe attempt %d failed: %d", attempt + 1, ret);
+        k_msleep(10);
+    }
     if (ret < 0) {
         LOG_ERR("MAX5419 @0x%02X not responding: %d", MAX5419_I2C_ADDR, ret);
         return ret;
@@ -108,6 +118,11 @@ int max5419_set_tap(uint8_t tap)
 
     uint8_t buf[2] = { CMD_VREG, tap };
     int ret = i2c_write(i2c_dev, buf, sizeof(buf), MAX5419_I2C_ADDR);
+    if (ret < 0) {
+        /* One retry — transient NAKs observed on this part */
+        k_msleep(5);
+        ret = i2c_write(i2c_dev, buf, sizeof(buf), MAX5419_I2C_ADDR);
+    }
     if (ret < 0) {
         LOG_ERR("MAX5419 set tap %u failed: %d", tap, ret);
         return ret;

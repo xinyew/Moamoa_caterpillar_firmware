@@ -142,7 +142,7 @@ async def read_status(client: BleakClient):
     print(f"  firmware   v{fw_maj}.{fw_min}.{fw_pat}")
     print(f"  PWM        {freq} Hz, duty IN1 {duty1}% / IN2 {duty2}%")
     print(f"  VDC        target {tgt} mV, measured {meas} mV")
-    print(f"  rail {'ON ' if rail else 'OFF'}   driver "
+    print(f"  STBB1 rail {'ON' if rail else 'OFF'}   DRV8212 "
           f"{'AWAKE' if drv else 'SLEEP'}   IMU {'ok' if imu else 'absent'}")
     print(f"  uptime     {uptime} s")
     print(f"  last reset 0x{cause:08x}" + (f" ({causes})" if causes else ""))
