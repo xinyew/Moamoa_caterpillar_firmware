@@ -16,19 +16,26 @@ LOG_MODULE_REGISTER(drv_led, LOG_LEVEL_INF);
 #define LED_PIN   1
 
 /* -------------------------------------------------------------------------- */
-/*  Blink pattern — 3 short flashes, then dark until the 1 s period ends      */
+/*  Blink patterns                                                            */
+/*                                                                            */
+/*  After a reset: 3 × 3 ms flashes per second for BOOT_PATTERN_REPEATS       */
+/*  seconds — a glanceable "this board just reset" marker.                    */
+/*  Running: a single 3 ms flash per second.                                  */
 /* -------------------------------------------------------------------------- */
 
 #define FLASH_ON_MS    3
 #define FLASH_GAP_MS   100
 #define PERIOD_MS      1000
 
+/* How many 1 s reset-marker periods to play after boot */
+#define BOOT_PATTERN_REPEATS  5
+
 struct blink_step {
     uint8_t  on;
     uint16_t ms;
 };
 
-static const struct blink_step pattern[] = {
+static const struct blink_step boot_pattern[] = {
     { 1, FLASH_ON_MS },
     { 0, FLASH_GAP_MS },
     { 1, FLASH_ON_MS },
@@ -37,11 +44,26 @@ static const struct blink_step pattern[] = {
     { 0, PERIOD_MS - 3 * FLASH_ON_MS - 2 * FLASH_GAP_MS },
 };
 
+static const struct blink_step run_pattern[] = {
+    { 1, FLASH_ON_MS },
+    { 0, PERIOD_MS - FLASH_ON_MS },
+};
+
+static const struct blink_step *pattern = boot_pattern;
+static size_t pattern_len = ARRAY_SIZE(boot_pattern);
 static size_t step_idx;
+static uint8_t boot_periods_left;
 
 static void blink_timer_fn(struct k_timer *timer)
 {
-    step_idx = (step_idx + 1) % ARRAY_SIZE(pattern);
+    step_idx++;
+    if (step_idx >= pattern_len) {
+        step_idx = 0;
+        if (boot_periods_left > 0 && --boot_periods_left == 0) {
+            pattern = run_pattern;
+            pattern_len = ARRAY_SIZE(run_pattern);
+        }
+    }
     gpio_pin_set_raw(LED_PORT, LED_PIN, pattern[step_idx].on);
     k_timer_start(timer, K_MSEC(pattern[step_idx].ms), K_NO_WAIT);
 }
@@ -71,6 +93,9 @@ int drv_led_init(void)
 
 void drv_led_blink_start(void)
 {
+    pattern = boot_pattern;
+    pattern_len = ARRAY_SIZE(boot_pattern);
+    boot_periods_left = BOOT_PATTERN_REPEATS;
     step_idx = 0;
     gpio_pin_set_raw(LED_PORT, LED_PIN, pattern[0].on);
     k_timer_start(&blink_timer, K_MSEC(pattern[0].ms), K_NO_WAIT);

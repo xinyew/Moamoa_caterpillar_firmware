@@ -14,8 +14,10 @@
 int drv_led_init(void);
 
 /**
- * @brief Start the alive pattern: 3 × 3 ms flashes per second,
- * driven by a kernel timer (independent of main-loop pacing).
+ * @brief Start the alive pattern (kernel-timer driven).
+ *
+ * First ~5 s after boot: 3 × 3 ms flashes per second — reset marker.
+ * Afterwards: a single 3 ms flash per second — running.
  */
 void drv_led_blink_start(void);
 
