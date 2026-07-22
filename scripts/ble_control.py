@@ -199,6 +199,13 @@ async def dfu(address: str, path: str):
     # Generous timeout: smpclient's Windows-MTU-bug workaround needs
     # several seconds of retries inside connect()
     async with SMPClient(SMPBLETransport(), address, timeout_s=20.0) as client:
+        pre = await client.request(ImageStatesRead())
+        if not error(pre):
+            active = next((i for i in pre.images
+                           if getattr(i, "active", False)), None)
+            if active is not None:
+                print(f"  device runs: version {active.version}")
+
         loop = asyncio.get_event_loop()
         start = loop.time()
         async for offset in client.upload(image):
@@ -221,6 +228,9 @@ async def dfu(address: str, path: str):
         marked = await client.request(
             ImageStatesWrite(hash=pending.hash, confirm=False))
         if error(marked):
+            if "TEST_TO_ACTIVE_DENIED" in str(marked):
+                print("Device already runs this exact image - nothing to do.")
+                return
             print(f"Marking image failed: {marked}", file=sys.stderr)
             sys.exit(1)
 
