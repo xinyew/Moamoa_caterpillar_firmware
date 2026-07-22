@@ -7,6 +7,7 @@
  *   0xFFE3 — read:  measured VDC in mV (u16 LE, AIN4 sense divider)
  *   0xFFE4 — write: motor rail enable (u8: 0=off, 1=on) → drv_stbb1_apur_set()
  *   0xFFE5 — write: motor driver awake (u8: 0=sleep, 1=awake) → drv_drv8212_set()
+ *   0xFFE6 — read:  status packet (24 B LE struct, see on_status_read)
  * Writes accept acknowledged Write Requests as well as
  * Write-Without-Response.
  */
@@ -18,6 +19,7 @@
 #include "../drivers/driver_vdc_sense.h"
 #include "../drivers/driver_stbb1_apur.h"
 #include "../drivers/driver_drv8212.h"
+#include "../drivers/driver_asm330lhh.h"
 
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/conn.h>
@@ -25,6 +27,11 @@
 #include <zephyr/bluetooth/uuid.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/kernel.h>
+#include <zephyr/sys/byteorder.h>
+#include <app_version.h>
+
+/* Boot reset cause captured in main.c */
+extern uint32_t app_reset_cause;
 
 LOG_MODULE_REGISTER(ble_if, LOG_LEVEL_INF);
 
@@ -39,6 +46,7 @@ LOG_MODULE_REGISTER(ble_if, LOG_LEVEL_INF);
 #define BT_UUID_CATERPILLAR_VDCMEAS_VAL 0xFFE3
 #define BT_UUID_CATERPILLAR_RAIL_VAL    0xFFE4
 #define BT_UUID_CATERPILLAR_DRV_VAL     0xFFE5
+#define BT_UUID_CATERPILLAR_STATUS_VAL  0xFFE6
 
 #define BT_UUID_CATERPILLAR_SVC  BT_UUID_DECLARE_16(BT_UUID_CATERPILLAR_SVC_VAL)
 #define BT_UUID_CATERPILLAR_FREQ BT_UUID_DECLARE_16(BT_UUID_CATERPILLAR_FREQ_VAL)
@@ -47,6 +55,8 @@ LOG_MODULE_REGISTER(ble_if, LOG_LEVEL_INF);
     BT_UUID_DECLARE_16(BT_UUID_CATERPILLAR_VDCMEAS_VAL)
 #define BT_UUID_CATERPILLAR_RAIL BT_UUID_DECLARE_16(BT_UUID_CATERPILLAR_RAIL_VAL)
 #define BT_UUID_CATERPILLAR_DRV  BT_UUID_DECLARE_16(BT_UUID_CATERPILLAR_DRV_VAL)
+#define BT_UUID_CATERPILLAR_STATUS \
+    BT_UUID_DECLARE_16(BT_UUID_CATERPILLAR_STATUS_VAL)
 
 /* -------------------------------------------------------------------------- */
 /*  Advertising data                                                          */
@@ -207,6 +217,51 @@ static ssize_t on_drv_write(struct bt_conn *conn,
 }
 
 /* -------------------------------------------------------------------------- */
+/*  GATT characteristic — status packet (read)                                */
+/*                                                                            */
+/*  Fixed 24-byte little-endian layout, parsed by scripts/ble_control.py:     */
+/*    0  u8   packet format version (1)                                       */
+/*    1  u8   fw major    2 u8 fw minor    3 u8 fw patch                      */
+/*    4  u16  PWM frequency [Hz]                                              */
+/*    6  u8   duty IN1 [%]   7 u8 duty IN2 [%]                                */
+/*    8  u16  target VDC [mV] (0 = never set)                                 */
+/*   10  u16  measured VDC [mV]                                               */
+/*   12  u8   rail on   13 u8 driver awake   14 u8 IMU ok   15 u8 rsvd        */
+/*   16  u32  uptime [s]                                                      */
+/*   20  u32  boot reset cause (zephyr hwinfo bits)                           */
+/* -------------------------------------------------------------------------- */
+
+#define STATUS_PKT_VERSION  1
+
+static ssize_t on_status_read(struct bt_conn *conn,
+                              const struct bt_gatt_attr *attr,
+                              void *buf, uint16_t len, uint16_t offset)
+{
+    uint8_t s[24];
+    int32_t vdc_mv = 0;
+
+    (void)drv_vdc_sense_read_mv(&vdc_mv);
+
+    s[0] = STATUS_PKT_VERSION;
+    s[1] = APP_VERSION_MAJOR;
+    s[2] = APP_VERSION_MINOR;
+    s[3] = APP_PATCHLEVEL;
+    sys_put_le16(drv_pwm_get_frequency(), &s[4]);
+    s[6] = drv_pwm_get_duty(0);
+    s[7] = drv_pwm_get_duty(1);
+    sys_put_le16(max5419_get_target_mv(), &s[8]);
+    sys_put_le16((uint16_t)CLAMP(vdc_mv, 0, UINT16_MAX), &s[10]);
+    s[12] = drv_stbb1_apur_enabled() ? 1 : 0;
+    s[13] = drv_drv8212_awake() ? 1 : 0;
+    s[14] = drv_asm330lhh_ok() ? 1 : 0;
+    s[15] = 0;
+    sys_put_le32((uint32_t)(k_uptime_get() / 1000), &s[16]);
+    sys_put_le32(app_reset_cause, &s[20]);
+
+    return bt_gatt_attr_read(conn, attr, buf, len, offset, s, sizeof(s));
+}
+
+/* -------------------------------------------------------------------------- */
 /*  GATT service definition                                                   */
 /* -------------------------------------------------------------------------- */
 
@@ -232,6 +287,10 @@ BT_GATT_SERVICE_DEFINE(caterpillar_svc,
         BT_GATT_CHRC_WRITE | BT_GATT_CHRC_WRITE_WITHOUT_RESP,
         BT_GATT_PERM_WRITE,
         NULL, on_drv_write, NULL),
+    BT_GATT_CHARACTERISTIC(BT_UUID_CATERPILLAR_STATUS,
+        BT_GATT_CHRC_READ,
+        BT_GATT_PERM_READ,
+        on_status_read, NULL, NULL),
 );
 
 /* -------------------------------------------------------------------------- */

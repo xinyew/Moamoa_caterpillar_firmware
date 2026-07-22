@@ -144,6 +144,16 @@ static int ramp_to_tap(uint8_t tap)
     return 0;
 }
 
+uint16_t max5419_get_target_mv(void)
+{
+    if (cur_tap < 0) {
+        return 0;
+    }
+    float rhw_k = R_POT_K * (float)(255 - cur_tap) / 255.0f;
+    float v = 0.5f * (1.0f + R_TOP_K / (R_SERIES_K + rhw_k));
+    return (uint16_t)(v * 1000.0f + 0.5f);
+}
+
 int max5419_set_voltage(float voltage)
 {
     float den = 2.0f * voltage - 1.0f;

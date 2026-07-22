@@ -21,6 +21,8 @@ LOG_MODULE_REGISTER(drv_drv8212, LOG_LEVEL_DBG);
 #define DRV8212_SLEEP_PORT  DEVICE_DT_GET(DT_NODELABEL(gpio1))
 #define DRV8212_SLEEP_PIN   6
 
+static bool drv_awake;
+
 /* -------------------------------------------------------------------------- */
 /*  Public API                                                                */
 /* -------------------------------------------------------------------------- */
@@ -50,11 +52,18 @@ int drv_drv8212_init(void)
         LOG_WRN("DRV8212 nSLEEP is LOW — driver is asleep, motor won't spin");
     }
 
+    drv_awake = true;
     return 0;
 }
 
 void drv_drv8212_set(bool awake)
 {
     gpio_pin_set_raw(DRV8212_SLEEP_PORT, DRV8212_SLEEP_PIN, awake ? 1 : 0);
+    drv_awake = awake;
     LOG_INF("DRV8212 nSLEEP -> %s", awake ? "AWAKE" : "SLEEP");
+}
+
+bool drv_drv8212_awake(void)
+{
+    return drv_awake;
 }

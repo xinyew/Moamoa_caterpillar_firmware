@@ -19,6 +19,8 @@ LOG_MODULE_REGISTER(drv_stbb1_apur, LOG_LEVEL_DBG);
 #define DCDC_EN_PORT  DEVICE_DT_GET(DT_NODELABEL(gpio2))
 #define DCDC_EN_PIN   3
 
+static bool rail_on;
+
 /* -------------------------------------------------------------------------- */
 /*  Public API                                                                */
 /* -------------------------------------------------------------------------- */
@@ -51,11 +53,18 @@ int drv_stbb1_apur_init(void)
         LOG_WRN("DCDC_EN read-back is LOW — check for short or floating pin");
     }
 
+    rail_on = true;
     return 0;
 }
 
 void drv_stbb1_apur_set(bool enable)
 {
     gpio_pin_set_raw(DCDC_EN_PORT, DCDC_EN_PIN, enable ? 1 : 0);
+    rail_on = enable;
     LOG_INF("STBB1-APUR DCDC_EN -> %s", enable ? "ON" : "OFF");
+}
+
+bool drv_stbb1_apur_enabled(void)
+{
+    return rail_on;
 }

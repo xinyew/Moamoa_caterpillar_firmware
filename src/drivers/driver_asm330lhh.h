@@ -44,4 +44,7 @@ int drv_asm330lhh_read(struct asm330lhh_data *data);
  */
 int drv_asm330lhh_wait_data(int32_t timeout_ms);
 
+/** @brief Whether the IMU initialized successfully this boot. */
+bool drv_asm330lhh_ok(void);
+
 #endif /* DRIVER_ASM330LHH_H */

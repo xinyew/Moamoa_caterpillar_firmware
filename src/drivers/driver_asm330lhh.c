@@ -118,6 +118,7 @@ static int16_t sign_extend_pair(uint8_t l, uint8_t h)
 
 static K_SEM_DEFINE(drdy_sem, 0, 1);
 static struct gpio_callback drdy_cb;
+static bool imu_ok;
 
 static void drdy_isr(const struct device *port, struct gpio_callback *cb,
                      uint32_t pins)
@@ -210,7 +211,13 @@ int drv_asm330lhh_init(void)
     (void)drv_asm330lhh_read(&scratch);
 
     LOG_INF("IMU: XL 12.5Hz ±2g, G 12.5Hz ±250dps, BDU, DRDY→INT1");
+    imu_ok = true;
     return 0;
+}
+
+bool drv_asm330lhh_ok(void)
+{
+    return imu_ok;
 }
 
 int drv_asm330lhh_wait_data(int32_t timeout_ms)

@@ -33,6 +33,12 @@ int drv_pwm_init(void);
  */
 int drv_pwm_set_duty(uint8_t channel, uint8_t percent);
 
+/** @brief Currently applied duty in percent (0 for invalid channel). */
+uint8_t drv_pwm_get_duty(uint8_t channel);
+
+/** @brief Currently applied PWM frequency in Hz. */
+uint16_t drv_pwm_get_frequency(void);
+
 /**
  * @brief Change the PWM frequency on the fly (keeps current duty ratios).
  *

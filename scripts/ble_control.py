@@ -35,6 +35,7 @@ CHAR_UUID_VOLT    = "0000ffe2-0000-1000-8000-00805f9b34fb"
 CHAR_UUID_VDCMEAS = "0000ffe3-0000-1000-8000-00805f9b34fb"
 CHAR_UUID_RAIL    = "0000ffe4-0000-1000-8000-00805f9b34fb"
 CHAR_UUID_DRV     = "0000ffe5-0000-1000-8000-00805f9b34fb"
+CHAR_UUID_STATUS  = "0000ffe6-0000-1000-8000-00805f9b34fb"
 DEVICE_NAME       = "Caterpillar"
 
 # Must match firmware (driver_pwm.h): nRF54 PWM cannot go below ~4 Hz
@@ -113,6 +114,40 @@ async def read_vdc(client: BleakClient):
     return mv
 
 
+# Layout of the 0xFFE6 status packet — must match ble_interface.c
+STATUS_FMT = "<4BH2B2H4B2I"
+RESET_BITS = {0: "pin", 1: "soft", 2: "brownout", 3: "POR",
+              4: "watchdog", 5: "debug"}
+
+
+async def read_status(client: BleakClient):
+    """Read and pretty-print the 0xFFE6 status packet."""
+    try:
+        data = await client.read_gatt_char(CHAR_UUID_STATUS)
+    except Exception:
+        # Firmware older than v1.0.4 — fall back to the VDC-only read
+        await read_vdc(client)
+        return
+
+    (pkt_ver, fw_maj, fw_min, fw_pat, freq, duty1, duty2, tgt, meas,
+     rail, drv, imu, _rsvd, uptime, cause) = struct.unpack(
+        STATUS_FMT, data[:struct.calcsize(STATUS_FMT)])
+
+    if pkt_ver != 1:
+        print(f"(unknown status packet version {pkt_ver}, raw: {data.hex()})")
+        return
+
+    causes = ", ".join(n for b, n in RESET_BITS.items() if cause & (1 << b))
+    print(f"Device status:")
+    print(f"  firmware   v{fw_maj}.{fw_min}.{fw_pat}")
+    print(f"  PWM        {freq} Hz, duty IN1 {duty1}% / IN2 {duty2}%")
+    print(f"  VDC        target {tgt} mV, measured {meas} mV")
+    print(f"  rail {'ON ' if rail else 'OFF'}   driver "
+          f"{'AWAKE' if drv else 'SLEEP'}   IMU {'ok' if imu else 'absent'}")
+    print(f"  uptime     {uptime} s")
+    print(f"  last reset 0x{cause:08x}" + (f" ({causes})" if causes else ""))
+
+
 async def one_shot(address: str, hz: int | None, volts: float | None,
                    read: bool, rail: int | None, drv: int | None):
     """Connect, apply the requested settings (acknowledged), disconnect."""
@@ -131,8 +166,10 @@ async def one_shot(address: str, hz: int | None, volts: float | None,
             await send_volt(client, volts, ack=True)
         if hz is not None:
             await send_freq(client, hz, ack=True)
-        if read or volts is not None:
+        if volts is not None:
             await read_vdc(client)
+        if read:
+            await read_status(client)
 
 
 async def interactive(address: str):
@@ -161,7 +198,7 @@ async def interactive(address: str):
                 continue
 
             if cmd.lower() == "r":
-                await read_vdc(client)
+                await read_status(client)
                 continue
 
             if cmd.lower() in ("on", "off"):

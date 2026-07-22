@@ -80,6 +80,16 @@ int drv_pwm_set_duty(uint8_t channel, uint8_t percent)
     return pwm_apply();
 }
 
+uint8_t drv_pwm_get_duty(uint8_t channel)
+{
+    return (channel > 1) ? 0 : duty_pct[channel];
+}
+
+uint16_t drv_pwm_get_frequency(void)
+{
+    return (uint16_t)(1000000000U / period_ns);
+}
+
 int drv_pwm_set_frequency(uint16_t hz)
 {
     if (hz < DRV_PWM_FREQ_MIN_HZ || hz > DRV_PWM_FREQ_MAX_HZ) {

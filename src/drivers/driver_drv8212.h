@@ -23,4 +23,7 @@ int drv_drv8212_init(void);
  */
 void drv_drv8212_set(bool awake);
 
+/** @brief Whether the driver is currently awake. */
+bool drv_drv8212_awake(void);
+
 #endif /* DRIVER_DRV8212_H */

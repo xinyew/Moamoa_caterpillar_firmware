@@ -25,21 +25,24 @@ LOG_MODULE_REGISTER(caterpillar_main, LOG_LEVEL_DBG);
  */
 #define MOTOR_VDC_V  3.1f
 
+/* Boot reset cause, exposed via the BLE status characteristic */
+uint32_t app_reset_cause;
+
 int main(void)
 {
     printk("\n=== Caterpillar Boot ===\n");
 
     /* Announce why we booted — makes brown-out reset loops visible
      * (a silent reset shows as ~65 ms of motor dropout otherwise).
+     * Kept in app_reset_cause for the BLE status characteristic.
      */
-    uint32_t reset_cause = 0;
-    if (hwinfo_get_reset_cause(&reset_cause) == 0) {
-        LOG_INF("Reset cause: 0x%08x%s%s%s%s%s", reset_cause,
-                (reset_cause & RESET_POR)      ? " POR/brownout" : "",
-                (reset_cause & RESET_PIN)      ? " pin"          : "",
-                (reset_cause & RESET_SOFTWARE) ? " soft"         : "",
-                (reset_cause & RESET_WATCHDOG) ? " watchdog"     : "",
-                (reset_cause & RESET_DEBUG)    ? " debug"        : "");
+    if (hwinfo_get_reset_cause(&app_reset_cause) == 0) {
+        LOG_INF("Reset cause: 0x%08x%s%s%s%s%s", app_reset_cause,
+                (app_reset_cause & RESET_POR)      ? " POR/brownout" : "",
+                (app_reset_cause & RESET_PIN)      ? " pin"          : "",
+                (app_reset_cause & RESET_SOFTWARE) ? " soft"         : "",
+                (app_reset_cause & RESET_WATCHDOG) ? " watchdog"     : "",
+                (app_reset_cause & RESET_DEBUG)    ? " debug"        : "");
         (void)hwinfo_clear_reset_cause();
     }
 

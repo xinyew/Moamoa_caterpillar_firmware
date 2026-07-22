@@ -60,4 +60,10 @@ int max5419_set_tap(uint8_t tap);
  */
 int max5419_set_voltage(float voltage);
 
+/**
+ * @brief Commanded VDC in mV, derived from the last written tap.
+ * @return Target in mV, or 0 if no tap has been written since boot.
+ */
+uint16_t max5419_get_target_mv(void);
+
 #endif /* MAX5419_H */

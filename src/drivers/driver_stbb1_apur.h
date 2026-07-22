@@ -23,4 +23,7 @@ int drv_stbb1_apur_init(void);
  */
 void drv_stbb1_apur_set(bool enable);
 
+/** @brief Whether the motor rail is currently enabled. */
+bool drv_stbb1_apur_enabled(void);
+
 #endif /* DRIVER_STBB1_APUR_H */
