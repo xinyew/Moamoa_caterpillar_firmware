@@ -8,6 +8,8 @@
  *   0xFFE4 — write: motor rail enable (u8: 0=off, 1=on) → drv_stbb1_apur_set()
  *   0xFFE5 — write: motor driver awake (u8: 0=sleep, 1=awake) → drv_drv8212_set()
  *   0xFFE6 — read:  status packet (24 B LE struct, see on_status_read)
+ *   0xFFE7 — write: throughput test sink / read: u32 LE byte counter
+ *            (temporary tuning aid — remove when BLE tuning is done)
  * Writes accept acknowledged Write Requests as well as
  * Write-Without-Response.
  */
@@ -47,6 +49,7 @@ LOG_MODULE_REGISTER(ble_if, LOG_LEVEL_INF);
 #define BT_UUID_CATERPILLAR_RAIL_VAL    0xFFE4
 #define BT_UUID_CATERPILLAR_DRV_VAL     0xFFE5
 #define BT_UUID_CATERPILLAR_STATUS_VAL  0xFFE6
+#define BT_UUID_CATERPILLAR_TPUT_VAL    0xFFE7
 
 #define BT_UUID_CATERPILLAR_SVC  BT_UUID_DECLARE_16(BT_UUID_CATERPILLAR_SVC_VAL)
 #define BT_UUID_CATERPILLAR_FREQ BT_UUID_DECLARE_16(BT_UUID_CATERPILLAR_FREQ_VAL)
@@ -57,6 +60,7 @@ LOG_MODULE_REGISTER(ble_if, LOG_LEVEL_INF);
 #define BT_UUID_CATERPILLAR_DRV  BT_UUID_DECLARE_16(BT_UUID_CATERPILLAR_DRV_VAL)
 #define BT_UUID_CATERPILLAR_STATUS \
     BT_UUID_DECLARE_16(BT_UUID_CATERPILLAR_STATUS_VAL)
+#define BT_UUID_CATERPILLAR_TPUT BT_UUID_DECLARE_16(BT_UUID_CATERPILLAR_TPUT_VAL)
 
 /* -------------------------------------------------------------------------- */
 /*  Advertising data                                                          */
@@ -262,6 +266,41 @@ static ssize_t on_status_read(struct bt_conn *conn,
 }
 
 /* -------------------------------------------------------------------------- */
+/*  GATT characteristic — throughput test sink (TEMPORARY tuning aid)         */
+/*                                                                            */
+/*  Write (any length): bytes are counted and discarded.                      */
+/*  Read: u32 LE running byte counter.  The script measures rate by          */
+/*  reading the counter before/after a timed write flood.                     */
+/* -------------------------------------------------------------------------- */
+
+static uint32_t tput_rx_bytes;
+
+static ssize_t on_tput_write(struct bt_conn *conn,
+                              const struct bt_gatt_attr *attr,
+                              const void *buf, uint16_t len,
+                              uint16_t offset, uint8_t flags)
+{
+    ARG_UNUSED(conn);
+    ARG_UNUSED(attr);
+    ARG_UNUSED(buf);
+    ARG_UNUSED(offset);
+    ARG_UNUSED(flags);
+
+    tput_rx_bytes += len;
+    return len;
+}
+
+static ssize_t on_tput_read(struct bt_conn *conn,
+                             const struct bt_gatt_attr *attr,
+                             void *buf, uint16_t len, uint16_t offset)
+{
+    uint8_t le[4];
+
+    sys_put_le32(tput_rx_bytes, le);
+    return bt_gatt_attr_read(conn, attr, buf, len, offset, le, sizeof(le));
+}
+
+/* -------------------------------------------------------------------------- */
 /*  GATT service definition                                                   */
 /* -------------------------------------------------------------------------- */
 
@@ -291,6 +330,10 @@ BT_GATT_SERVICE_DEFINE(caterpillar_svc,
         BT_GATT_CHRC_READ,
         BT_GATT_PERM_READ,
         on_status_read, NULL, NULL),
+    BT_GATT_CHARACTERISTIC(BT_UUID_CATERPILLAR_TPUT,
+        BT_GATT_CHRC_READ | BT_GATT_CHRC_WRITE | BT_GATT_CHRC_WRITE_WITHOUT_RESP,
+        BT_GATT_PERM_READ | BT_GATT_PERM_WRITE,
+        on_tput_read, on_tput_write, NULL),
 );
 
 /* -------------------------------------------------------------------------- */

@@ -36,6 +36,7 @@ CHAR_UUID_VDCMEAS = "0000ffe3-0000-1000-8000-00805f9b34fb"
 CHAR_UUID_RAIL    = "0000ffe4-0000-1000-8000-00805f9b34fb"
 CHAR_UUID_DRV     = "0000ffe5-0000-1000-8000-00805f9b34fb"
 CHAR_UUID_STATUS  = "0000ffe6-0000-1000-8000-00805f9b34fb"
+CHAR_UUID_TPUT    = "0000ffe7-0000-1000-8000-00805f9b34fb"
 DEVICE_NAME       = "Caterpillar"
 
 # Must match firmware (driver_pwm.h): nRF54 PWM cannot go below ~4 Hz
@@ -112,6 +113,36 @@ async def read_vdc(client: BleakClient):
     mv = struct.unpack("<H", data)[0]
     print(f"Measured VDC: {mv} mV", flush=True)
     return mv
+
+
+async def tput_test(address: str, kib: int):
+    """Measure raw GATT write throughput against the 0xFFE7 sink."""
+    total = kib * 1024
+    print(f"Connecting to {address} ...", flush=True)
+    async with BleakClient(address,
+                           winrt=dict(use_cached_services=False)) as client:
+        mtu = client.mtu_size
+        chunk = max(20, mtu - 3)
+        print(f"Connected (MTU={mtu}), chunk {chunk} B, sending {kib} KiB ...")
+
+        c0 = struct.unpack("<I",
+                           await client.read_gatt_char(CHAR_UUID_TPUT))[0]
+        payload = bytes(chunk)
+        loop = asyncio.get_event_loop()
+        t0 = loop.time()
+        sent = 0
+        while sent < total:
+            await client.write_gatt_char(CHAR_UUID_TPUT, payload,
+                                         response=False)
+            sent += len(payload)
+        c1 = struct.unpack("<I",
+                           await client.read_gatt_char(CHAR_UUID_TPUT))[0]
+        dt = loop.time() - t0
+
+        got = (c1 - c0) & 0xFFFFFFFF
+        print(f"  sent {sent} B, device counted {got} B"
+              f"{'  (LOSS!)' if got != sent else ''}")
+        print(f"  elapsed {dt:.2f} s -> {sent / dt / 1024:.1f} KiB/s")
 
 
 # Layout of the 0xFFE6 status packet — must match ble_interface.c
@@ -316,6 +347,9 @@ async def main():
                         help="DRV8212 driver: 0=sleep, 1=awake (one-shot mode)")
     parser.add_argument("--dfu", metavar="SIGNED_BIN", default=None,
                         help="OTA-update firmware (zephyr.signed.bin)")
+    parser.add_argument("--tput", metavar="KIB", type=int, nargs="?",
+                        const=64, default=None,
+                        help="BLE throughput test (default 64 KiB)")
     args = parser.parse_args()
 
     if args.freq is not None and not (FREQ_MIN <= args.freq <= FREQ_MAX):
@@ -334,6 +368,10 @@ async def main():
 
     if args.dfu is not None:
         await dfu(address, args.dfu)
+        return
+
+    if args.tput is not None:
+        await tput_test(address, args.tput)
         return
 
     if (args.freq is not None or args.volt is not None or args.read
