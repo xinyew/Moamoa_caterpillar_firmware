@@ -196,7 +196,9 @@ async def dfu(address: str, path: str):
     print(f"DFU image: {path} ({len(image)} bytes)")
 
     print(f"Connecting (SMP) to {address} ...", flush=True)
-    async with SMPClient(SMPBLETransport(), address) as client:
+    # Generous timeout: smpclient's Windows-MTU-bug workaround needs
+    # several seconds of retries inside connect()
+    async with SMPClient(SMPBLETransport(), address, timeout_s=20.0) as client:
         loop = asyncio.get_event_loop()
         start = loop.time()
         async for offset in client.upload(image):
