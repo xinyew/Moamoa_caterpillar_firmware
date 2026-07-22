@@ -377,6 +377,12 @@ static void connected(struct bt_conn *conn, uint8_t err)
         .timeout = 400,
     };
     bt_conn_le_param_update(conn, &param);
+
+    /* Request 2M PHY — doubles air throughput if the central agrees */
+    int perr = bt_conn_le_phy_update(conn, BT_CONN_LE_PHY_PARAM_2M);
+    if (perr) {
+        LOG_WRN("2M PHY request failed: %d", perr);
+    }
 }
 
 static void disconnected(struct bt_conn *conn, uint8_t reason)
