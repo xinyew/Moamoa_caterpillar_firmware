@@ -13,14 +13,17 @@
 ## Commands:
 Load nrf connect sdk terminal for env variables, etc, please do this before any command below other than the RTT reading:
 $ nrfutil sdk-manager toolchain launch --ncs-version v3.3.0 --terminal  
-Build project (use --no-sysbuild: a fresh CLI sysbuild configure fails to
-find the custom board; only VS-Code-extension-created build trees work
-with sysbuild):
-$ west build -b caterpillar/nrf54l15/cpuapp --no-sysbuild
+Build project (sysbuild + MCUboot; -DBOARD_ROOT is REQUIRED for the CLI
+sysbuild configure to find the custom board):
+$ west build -b caterpillar/nrf54l15/cpuapp -- -DBOARD_ROOT="C:/Users/xwang3239/Downloads/Moamoa_caterpillar_firmware"
 One-shot non-interactive build (no terminal needed, good for agents/scripts):
-$ nrfutil sdk-manager toolchain launch --ncs-version v3.3.0 -- west build -b caterpillar/nrf54l15/cpuapp --no-sysbuild
-Flash firmware after a successful build:
+$ nrfutil sdk-manager toolchain launch --ncs-version v3.3.0 -- west build -b caterpillar/nrf54l15/cpuapp -- -DBOARD_ROOT="C:/Users/xwang3239/Downloads/Moamoa_caterpillar_firmware"
+Flash over SWD (needed once to install MCUboot; erases everything):
 $ west flash --recover
+OTA update over BLE (after MCUboot is on the board; needs `pip install smpclient`):
+$ python scripts/ble_control.py --dfu build/Moamoa_caterpillar_firmware/zephyr/zephyr.signed.bin
+Images are auto-signed with the SDK dev key (intentionally open DFU — the
+"not secure" build warning is expected). Bump VERSION before OTA releases.
 Load RTT console and connect to the board (makesure to set a timeout of 5 seconds, if there's nothing or returned meaning no output):
 $ & "~\Downloads\SimplicityCommander-Windows\SimplicityCommander-Windows\Commander-cli_win32_x64_1v24p1b1980\Simplicity Commander CLI\commander-cli.exe"  rtt connect --device nrf54l15_M33
 

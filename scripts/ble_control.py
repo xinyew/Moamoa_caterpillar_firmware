@@ -177,6 +177,60 @@ async def interactive(address: str):
             await send_freq(client, hz, ack=False)
 
 
+async def dfu(address: str, path: str):
+    """OTA update: upload a signed image over SMP, mark it, reboot."""
+    try:
+        from smpclient import SMPClient
+        from smpclient.transport.ble import SMPBLETransport
+        from smpclient.generics import error
+        from smpclient.requests.image_management import (ImageStatesRead,
+                                                         ImageStatesWrite)
+        from smpclient.requests.os_management import ResetWrite
+    except ImportError:
+        print("DFU requires the smpclient package:  pip install smpclient",
+              file=sys.stderr)
+        sys.exit(1)
+
+    with open(path, "rb") as f:
+        image = f.read()
+    print(f"DFU image: {path} ({len(image)} bytes)")
+
+    print(f"Connecting (SMP) to {address} ...", flush=True)
+    async with SMPClient(SMPBLETransport(), address) as client:
+        loop = asyncio.get_event_loop()
+        start = loop.time()
+        async for offset in client.upload(image):
+            pct = 100 * offset // len(image)
+            print(f"\r  upload {offset}/{len(image)} B ({pct}%)",
+                  end="", flush=True)
+        rate = len(image) / max(loop.time() - start, 1e-9) / 1024
+        print(f"\r  upload {len(image)}/{len(image)} B (100%), {rate:.1f} KiB/s")
+
+        states = await client.request(ImageStatesRead())
+        if error(states):
+            print(f"Image state read failed: {states}", file=sys.stderr)
+            sys.exit(1)
+        pending = next((i for i in states.images if i.slot == 1), None)
+        if pending is None:
+            print("Uploaded image not visible in slot 1", file=sys.stderr)
+            sys.exit(1)
+        print(f"  slot 1: version {pending.version}")
+
+        marked = await client.request(
+            ImageStatesWrite(hash=pending.hash, confirm=False))
+        if error(marked):
+            print(f"Marking image failed: {marked}", file=sys.stderr)
+            sys.exit(1)
+
+        print("Image marked for install; rebooting device ...")
+        reset = await client.request(ResetWrite())
+        if error(reset):
+            print(f"Reset failed: {reset}", file=sys.stderr)
+            sys.exit(1)
+
+    print("DFU sent - device installs and boots the new firmware (~10 s).")
+
+
 async def main():
     parser = argparse.ArgumentParser(
         description="Caterpillar BLE frequency / voltage control")
@@ -189,6 +243,8 @@ async def main():
                         help="Read measured VDC (one-shot mode)")
     parser.add_argument("--rail", type=int, choices=[0, 1], default=None,
                         help="Motor rail enable: 0=off, 1=on (one-shot mode)")
+    parser.add_argument("--dfu", metavar="SIGNED_BIN", default=None,
+                        help="OTA-update firmware (zephyr.signed.bin)")
     args = parser.parse_args()
 
     if args.freq is not None and not (FREQ_MIN <= args.freq <= FREQ_MAX):
@@ -204,6 +260,10 @@ async def main():
     address = await discover()
     if address is None:
         sys.exit(1)
+
+    if args.dfu is not None:
+        await dfu(address, args.dfu)
+        return
 
     if (args.freq is not None or args.volt is not None or args.read
             or args.rail is not None):
