@@ -13,4 +13,14 @@
  */
 int drv_drv8212_init(void);
 
+/**
+ * @brief Wake or sleep the DRV8212P (drives nSLEEP, P1.06).
+ *
+ * Sleep puts the H-bridge outputs Hi-Z (coast) at µA-level quiescent
+ * draw, independent of the motor rail (see drv_stbb1_apur_set).
+ *
+ * @param awake  true = nSLEEP high (driver active), false = sleep.
+ */
+void drv_drv8212_set(bool awake);
+
 #endif /* DRIVER_DRV8212_H */

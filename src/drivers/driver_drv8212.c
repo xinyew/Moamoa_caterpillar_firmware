@@ -52,3 +52,9 @@ int drv_drv8212_init(void)
 
     return 0;
 }
+
+void drv_drv8212_set(bool awake)
+{
+    gpio_pin_set_raw(DRV8212_SLEEP_PORT, DRV8212_SLEEP_PIN, awake ? 1 : 0);
+    LOG_INF("DRV8212 nSLEEP -> %s", awake ? "AWAKE" : "SLEEP");
+}

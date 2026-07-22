@@ -34,6 +34,7 @@ CHAR_UUID_FREQ    = "0000ffe1-0000-1000-8000-00805f9b34fb"
 CHAR_UUID_VOLT    = "0000ffe2-0000-1000-8000-00805f9b34fb"
 CHAR_UUID_VDCMEAS = "0000ffe3-0000-1000-8000-00805f9b34fb"
 CHAR_UUID_RAIL    = "0000ffe4-0000-1000-8000-00805f9b34fb"
+CHAR_UUID_DRV     = "0000ffe5-0000-1000-8000-00805f9b34fb"
 DEVICE_NAME       = "Caterpillar"
 
 # Must match firmware (driver_pwm.h): nRF54 PWM cannot go below ~4 Hz
@@ -97,6 +98,13 @@ async def send_rail(client: BleakClient, on: bool, ack: bool):
           f"{' (acked)' if ack else ''}", flush=True)
 
 
+async def send_drv(client: BleakClient, awake: bool, ack: bool):
+    await client.write_gatt_char(CHAR_UUID_DRV, bytes([1 if awake else 0]),
+                                 response=ack)
+    print(f"Motor driver -> {'AWAKE' if awake else 'SLEEP'}"
+          f"{' (acked)' if ack else ''}", flush=True)
+
+
 async def read_vdc(client: BleakClient):
     """Read the measured motor rail voltage (AIN4 sense divider)."""
     data = await client.read_gatt_char(CHAR_UUID_VDCMEAS)
@@ -106,14 +114,19 @@ async def read_vdc(client: BleakClient):
 
 
 async def one_shot(address: str, hz: int | None, volts: float | None,
-                   read: bool, rail: int | None):
+                   read: bool, rail: int | None, drv: int | None):
     """Connect, apply the requested settings (acknowledged), disconnect."""
     print(f"Connecting to {address} ...", flush=True)
-    async with BleakClient(address) as client:
+    # use_cached_services=False: Windows serves stale GATT tables after
+    # an OTA changes the services (winrt-only kwarg, ignored elsewhere)
+    async with BleakClient(address,
+                           winrt=dict(use_cached_services=False)) as client:
         print(f"Connected (MTU={client.mtu_size})", flush=True)
         if rail is not None:
             await send_rail(client, rail != 0, ack=True)
             await asyncio.sleep(0.1)   # let the rail settle before reading
+        if drv is not None:
+            await send_drv(client, drv != 0, ack=True)
         if volts is not None:
             await send_volt(client, volts, ack=True)
         if hz is not None:
@@ -129,7 +142,10 @@ async def interactive(address: str):
     print("'r' to read measured VDC, or 'q' to quit.")
     print("Changes apply instantly via Write Without Response.\n")
 
-    async with BleakClient(address) as client:
+    # use_cached_services=False: Windows serves stale GATT tables after
+    # an OTA changes the services (winrt-only kwarg, ignored elsewhere)
+    async with BleakClient(address,
+                           winrt=dict(use_cached_services=False)) as client:
         print(f"Connected (MTU={client.mtu_size})\n", flush=True)
         while True:
             try:
@@ -150,6 +166,10 @@ async def interactive(address: str):
 
             if cmd.lower() in ("on", "off"):
                 await send_rail(client, cmd.lower() == "on", ack=False)
+                continue
+
+            if cmd.lower() in ("wake", "sleep"):
+                await send_drv(client, cmd.lower() == "wake", ack=False)
                 continue
 
             if cmd.lower().startswith("v"):
@@ -255,6 +275,8 @@ async def main():
                         help="Read measured VDC (one-shot mode)")
     parser.add_argument("--rail", type=int, choices=[0, 1], default=None,
                         help="Motor rail enable: 0=off, 1=on (one-shot mode)")
+    parser.add_argument("--drv", type=int, choices=[0, 1], default=None,
+                        help="DRV8212 driver: 0=sleep, 1=awake (one-shot mode)")
     parser.add_argument("--dfu", metavar="SIGNED_BIN", default=None,
                         help="OTA-update firmware (zephyr.signed.bin)")
     args = parser.parse_args()
@@ -278,9 +300,10 @@ async def main():
         return
 
     if (args.freq is not None or args.volt is not None or args.read
-            or args.rail is not None):
+            or args.rail is not None or args.drv is not None):
         try:
-            await one_shot(address, args.freq, args.volt, args.read, args.rail)
+            await one_shot(address, args.freq, args.volt, args.read,
+                           args.rail, args.drv)
         except Exception as e:
             print(f"Write failed: {e}", file=sys.stderr)
             sys.exit(1)

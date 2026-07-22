@@ -6,6 +6,7 @@
  *   0xFFE2 — write: motor rail VDC in mV (750–4200, u16 LE) → max5419_set_voltage()
  *   0xFFE3 — read:  measured VDC in mV (u16 LE, AIN4 sense divider)
  *   0xFFE4 — write: motor rail enable (u8: 0=off, 1=on) → drv_stbb1_apur_set()
+ *   0xFFE5 — write: motor driver awake (u8: 0=sleep, 1=awake) → drv_drv8212_set()
  * Writes accept acknowledged Write Requests as well as
  * Write-Without-Response.
  */
@@ -16,6 +17,7 @@
 #include "../drivers/max5419.h"
 #include "../drivers/driver_vdc_sense.h"
 #include "../drivers/driver_stbb1_apur.h"
+#include "../drivers/driver_drv8212.h"
 
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/conn.h>
@@ -36,6 +38,7 @@ LOG_MODULE_REGISTER(ble_if, LOG_LEVEL_INF);
 #define BT_UUID_CATERPILLAR_VOLT_VAL    0xFFE2
 #define BT_UUID_CATERPILLAR_VDCMEAS_VAL 0xFFE3
 #define BT_UUID_CATERPILLAR_RAIL_VAL    0xFFE4
+#define BT_UUID_CATERPILLAR_DRV_VAL     0xFFE5
 
 #define BT_UUID_CATERPILLAR_SVC  BT_UUID_DECLARE_16(BT_UUID_CATERPILLAR_SVC_VAL)
 #define BT_UUID_CATERPILLAR_FREQ BT_UUID_DECLARE_16(BT_UUID_CATERPILLAR_FREQ_VAL)
@@ -43,6 +46,7 @@ LOG_MODULE_REGISTER(ble_if, LOG_LEVEL_INF);
 #define BT_UUID_CATERPILLAR_VDCMEAS \
     BT_UUID_DECLARE_16(BT_UUID_CATERPILLAR_VDCMEAS_VAL)
 #define BT_UUID_CATERPILLAR_RAIL BT_UUID_DECLARE_16(BT_UUID_CATERPILLAR_RAIL_VAL)
+#define BT_UUID_CATERPILLAR_DRV  BT_UUID_DECLARE_16(BT_UUID_CATERPILLAR_DRV_VAL)
 
 /* -------------------------------------------------------------------------- */
 /*  Advertising data                                                          */
@@ -176,6 +180,33 @@ static ssize_t on_rail_write(struct bt_conn *conn,
 }
 
 /* -------------------------------------------------------------------------- */
+/*  GATT characteristic — motor driver sleep/wake                             */
+/* -------------------------------------------------------------------------- */
+
+static ssize_t on_drv_write(struct bt_conn *conn,
+                             const struct bt_gatt_attr *attr,
+                             const void *buf, uint16_t len,
+                             uint16_t offset, uint8_t flags)
+{
+    ARG_UNUSED(conn);
+    ARG_UNUSED(attr);
+    ARG_UNUSED(flags);
+
+    if (len != 1 || offset != 0) {
+        return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
+    }
+
+    uint8_t awake = *(const uint8_t *)buf;
+    if (awake > 1) {
+        return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
+    }
+
+    drv_drv8212_set(awake != 0);
+    LOG_INF("BLE: motor driver -> %s", awake ? "AWAKE" : "SLEEP");
+    return len;
+}
+
+/* -------------------------------------------------------------------------- */
 /*  GATT service definition                                                   */
 /* -------------------------------------------------------------------------- */
 
@@ -197,6 +228,10 @@ BT_GATT_SERVICE_DEFINE(caterpillar_svc,
         BT_GATT_CHRC_WRITE | BT_GATT_CHRC_WRITE_WITHOUT_RESP,
         BT_GATT_PERM_WRITE,
         NULL, on_rail_write, NULL),
+    BT_GATT_CHARACTERISTIC(BT_UUID_CATERPILLAR_DRV,
+        BT_GATT_CHRC_WRITE | BT_GATT_CHRC_WRITE_WITHOUT_RESP,
+        BT_GATT_PERM_WRITE,
+        NULL, on_drv_write, NULL),
 );
 
 /* -------------------------------------------------------------------------- */
