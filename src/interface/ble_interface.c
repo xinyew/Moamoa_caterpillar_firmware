@@ -7,7 +7,7 @@
  *   0xFFE3 — read:  measured VDC in mV (u16 LE, AIN4 sense divider)
  *   0xFFE4 — write: motor rail enable (u8: 0=off, 1=on) → drv_stbb1_apur_set()
  *   0xFFE5 — write: motor driver awake (u8: 0=sleep, 1=awake) → drv_drv8212_set()
- *   0xFFE6 — read:  status packet (24 B LE struct, see on_status_read)
+ *   0xFFE6 — read:  status packet (28 B LE struct, see on_status_read)
  *   0xFFE7 — write: throughput test sink / read: u32 LE byte counter
  *            (temporary tuning aid — remove when BLE tuning is done)
  * Writes accept acknowledged Write Requests as well as
@@ -223,8 +223,8 @@ static ssize_t on_drv_write(struct bt_conn *conn,
 /* -------------------------------------------------------------------------- */
 /*  GATT characteristic — status packet (read)                                */
 /*                                                                            */
-/*  Fixed 24-byte little-endian layout, parsed by scripts/ble_control.py:     */
-/*    0  u8   packet format version (1)                                       */
+/*  Fixed 28-byte little-endian layout, parsed by scripts/ble_control.py:     */
+/*    0  u8   packet format version (2)                                       */
 /*    1  u8   fw major    2 u8 fw minor    3 u8 fw patch                      */
 /*    4  u16  PWM frequency [Hz]                                              */
 /*    6  u8   duty IN1 [%]   7 u8 duty IN2 [%]                                */
@@ -233,15 +233,16 @@ static ssize_t on_drv_write(struct bt_conn *conn,
 /*   12  u8   rail on   13 u8 driver awake   14 u8 IMU ok   15 u8 rsvd        */
 /*   16  u32  uptime [s]                                                      */
 /*   20  u32  boot reset cause (zephyr hwinfo bits)                           */
+/*   24  u32  FLPR fw version 0x00MMmmpp (0 = FLPR not running/too old)       */
 /* -------------------------------------------------------------------------- */
 
-#define STATUS_PKT_VERSION  1
+#define STATUS_PKT_VERSION  2
 
 static ssize_t on_status_read(struct bt_conn *conn,
                               const struct bt_gatt_attr *attr,
                               void *buf, uint16_t len, uint16_t offset)
 {
-    uint8_t s[24];
+    uint8_t s[28];
     int32_t vdc_mv = 0;
 
     (void)drv_vdc_sense_read_mv(&vdc_mv);
@@ -262,6 +263,8 @@ static ssize_t on_status_read(struct bt_conn *conn,
     s[15] = 0;
     sys_put_le32((uint32_t)(k_uptime_get() / 1000), &s[16]);
     sys_put_le32(app_reset_cause, &s[20]);
+    sys_put_le32((IMU_SHARED->magic == IMU_SHARED_MAGIC)
+                     ? IMU_SHARED->flpr_version : 0, &s[24]);
 
     return bt_gatt_attr_read(conn, attr, buf, len, offset, s, sizeof(s));
 }

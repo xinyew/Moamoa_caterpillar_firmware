@@ -114,12 +114,20 @@ int main(void)
     struct imu_shared *sh = IMU_SHARED;
     uint32_t last_count = 0;
     int64_t last_warn = 0;
+    bool flpr_announced = false;
 
     while (1) {
         k_msleep(80);
 
         uint32_t count = sh->sample_count;
         bool alive = (sh->magic == IMU_SHARED_MAGIC);
+
+        if (alive && !flpr_announced) {
+            flpr_announced = true;
+            uint32_t v = sh->flpr_version;
+            LOG_INF("FLPR running, fw v%u.%u.%u",
+                    (v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF);
+        }
 
         if (!alive || !sh->imu_ok || count == last_count) {
             int64_t now = k_uptime_get();

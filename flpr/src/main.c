@@ -10,6 +10,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/init.h>
 #include <zephyr/sys/barrier.h>
+#include <app_version.h>
 
 #include "driver_asm330lhh.h"
 #include "common/imu_shared.h"
@@ -52,6 +53,9 @@ int main(void)
     int ret = drv_asm330lhh_init();
     sh->imu_ok = (ret == 0) ? 1 : 0;
     sh->whoami = drv_asm330lhh_whoami();
+    sh->flpr_version = ((uint32_t)APP_VERSION_MAJOR << 16) |
+                       ((uint32_t)APP_VERSION_MINOR << 8) |
+                       (uint32_t)APP_PATCHLEVEL;   /* from flpr/VERSION */
     barrier_dmem_fence_full();
     sh->magic = IMU_SHARED_MAGIC;   /* app may trust the block now */
 

@@ -146,6 +146,7 @@ async def tput_test(address: str, kib: int):
 
 
 # Layout of the 0xFFE6 status packet — must match ble_interface.c
+# (v1 = 24 B core; v2 appends u32 FLPR fw version at offset 24)
 STATUS_FMT = "<4BH2B2H4B2I"
 RESET_BITS = {0: "pin", 1: "soft", 2: "brownout", 3: "POR",
               4: "watchdog", 5: "debug"}
@@ -164,13 +165,24 @@ async def read_status(client: BleakClient):
      rail, drv, imu, _rsvd, uptime, cause) = struct.unpack(
         STATUS_FMT, data[:struct.calcsize(STATUS_FMT)])
 
-    if pkt_ver != 1:
+    if pkt_ver not in (1, 2):
         print(f"(unknown status packet version {pkt_ver}, raw: {data.hex()})")
         return
+
+    flpr_ver = None
+    if pkt_ver >= 2 and len(data) >= 28:
+        (flpr_ver,) = struct.unpack_from("<I", data, 24)
 
     causes = ", ".join(n for b, n in RESET_BITS.items() if cause & (1 << b))
     print(f"Device status:")
     print(f"  firmware   v{fw_maj}.{fw_min}.{fw_pat}")
+    if flpr_ver is None:
+        pass                       # v1 firmware: no FLPR version field
+    elif flpr_ver == 0:
+        print(f"  FLPR fw    not reported (FLPR not running?)")
+    else:
+        print(f"  FLPR fw    v{(flpr_ver >> 16) & 0xFF}"
+              f".{(flpr_ver >> 8) & 0xFF}.{flpr_ver & 0xFF}")
     print(f"  PWM        {freq} Hz, duty IN1 {duty1}% / IN2 {duty2}%")
     print(f"  VDC        target {tgt} mV, measured {meas} mV")
     print(f"  STBB1 rail {'ON' if rail else 'OFF'}   DRV8212 "

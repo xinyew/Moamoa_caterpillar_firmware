@@ -32,6 +32,13 @@ struct imu_shared {
     volatile int16_t rsvd2;
     volatile int32_t gyro_mdps[3];   /* ±250 dps FS */
     volatile int32_t temp_mdegc;
+
+    /* FLPR firmware version (from flpr/VERSION), written before magic:
+     * 0x00MMmmpp (major<<16 | minor<<8 | patch).  0 = FLPR predates
+     * this field or is not running.  Reported via BLE status (0xFFE6)
+     * so an OTA can be verified end-to-end for both cores.
+     */
+    volatile uint32_t flpr_version;
 };
 
 #define IMU_SHARED ((struct imu_shared *)IMU_SHARED_ADDR)
