@@ -8,8 +8,12 @@
  *                      that aren't a valid image (verified: it wiped
  *                      an earlier directory placed at 0xB9000).  Kept
  *                      erased, MCUboot skips the slot untouched.
- *   0xBA000..0xBA200   session directory: 16 x 32 B entries
- *   0xBA200..0x163F80  record ring, part A (last 128 B reserved so log
+ *   0xBA000..0xBA220   directory meta (32 B: layout + firmware stamp)
+ *                      + 16 x 32 B session entries.  A DFU upload
+ *                      overwrites this with image bytes; on the first
+ *                      boot of ANY new/reflashed firmware the stamp
+ *                      mismatches and every session slot is wiped.
+ *   0xBA220..0x163F80  record ring, part A (last 128 B reserved so log
  *                      data can never look like an MCUboot swap trailer)
  *   0x165000..0x17D000 record ring, part B (former FLPR code region)
  *
@@ -25,6 +29,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/flash.h>
 #include <zephyr/logging/log.h>
+#include <app_version.h>
 #include <string.h>
 
 LOG_MODULE_REGISTER(imu_log, LOG_LEVEL_INF);
@@ -40,8 +45,20 @@ LOG_MODULE_REGISTER(imu_log, LOG_LEVEL_INF);
 
 #define ENTRY_MAGIC     0x53455353UL   /* "SESS" */
 #define ENTRY_SIZE      32UL
-#define DIR_BYTES       (IMU_LOG_MAX_SESSIONS * ENTRY_SIZE)   /* 512 */
 #define DIR_BASE        (REGION_A_BASE + HDR_RESERVE)
+/* meta block + session entries */
+#define DIR_BYTES       ((IMU_LOG_MAX_SESSIONS + 1) * ENTRY_SIZE)
+
+#define META_MAGIC      0x474F4C43UL   /* "CLOG" */
+#define META_LAYOUT     1
+
+struct dir_meta {
+    uint32_t magic;
+    uint32_t layout;
+    uint32_t fw_version;   /* 0x00MMmmpp of the firmware that owns it */
+    uint32_t rsvd[5];
+};
+BUILD_ASSERT(sizeof(struct dir_meta) == ENTRY_SIZE);
 
 #define REC_SIZE        ((uint32_t)sizeof(struct imu_sample))   /* 16 */
 #define A_DATA_BYTES    (REGION_A_SIZE - HDR_RESERVE - DIR_BYTES - \
@@ -89,7 +106,29 @@ static uint32_t accum_rec_base;  /* absolute record index of accum[0] */
 
 static uint32_t entry_addr(uint32_t slot)
 {
-    return DIR_BASE + slot * ENTRY_SIZE;
+    return DIR_BASE + (slot + 1) * ENTRY_SIZE;   /* slot 0 after meta */
+}
+
+#define FW_VERSION_WORD  (((uint32_t)APP_VERSION_MAJOR << 16) | \
+                          ((uint32_t)APP_VERSION_MINOR << 8) | \
+                          (uint32_t)APP_PATCHLEVEL)
+
+/* Wipe every session slot and stamp the directory as owned by the
+ * running firmware.
+ */
+static void dir_wipe_and_stamp(void)
+{
+    uint8_t ff[DIR_BYTES];
+    struct dir_meta meta = {
+        .magic = META_MAGIC,
+        .layout = META_LAYOUT,
+        .fw_version = FW_VERSION_WORD,
+    };
+    memset(&meta.rsvd, 0xFF, sizeof(meta.rsvd));
+
+    memset(ff, 0xFF, sizeof(ff));
+    (void)flash_write(flash_dev, DIR_BASE, ff, sizeof(ff));
+    (void)flash_write(flash_dev, DIR_BASE, &meta, sizeof(meta));
 }
 
 static int entry_read(uint32_t slot, struct dir_entry *e)
@@ -202,6 +241,24 @@ int imu_log_init(void)
         return -ENODEV;
     }
 
+    /* A directory is only trusted if it was written by THIS firmware:
+     * a DFU upload overwrites it with image bytes, and even a same-
+     * layout directory from older firmware describes data the upload
+     * may have destroyed.  Anything else -> wipe all session slots.
+     */
+    struct dir_meta meta;
+
+    if (flash_read(flash_dev, DIR_BASE, &meta, sizeof(meta)) != 0 ||
+        meta.magic != META_MAGIC || meta.layout != META_LAYOUT ||
+        meta.fw_version != FW_VERSION_WORD) {
+        dir_wipe_and_stamp();
+        LOG_INF("IMU log: directory wiped (new firmware v%u.%u.%u)",
+                APP_VERSION_MAJOR, APP_VERSION_MINOR, APP_PATCHLEVEL);
+        LOG_INF("IMU log: %u KB ring (%u records), 0 stored sessions",
+                (unsigned)(DATA_CAPACITY / 1024), (unsigned)REC_CAPACITY);
+        return 0;
+    }
+
     /* Rebuild RAM state from the directory (sessions survive reboot) */
     int found = 0;
 
@@ -311,9 +368,7 @@ void imu_log_erase(void)
     imu_log_stop();
 
     k_mutex_lock(&log_lock, K_FOREVER);
-    uint8_t ff[DIR_BYTES];
-    memset(ff, 0xFF, sizeof(ff));
-    (void)flash_write(flash_dev, DIR_BASE, ff, sizeof(ff));
+    dir_wipe_and_stamp();
     total_abs = 0;
     seq_next = 1;
     cur_count = 0;
