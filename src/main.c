@@ -82,6 +82,14 @@ int main(void)
         LOG_ERR("Failed to init PWM");
     }
 
+    /* Prime the drive waveform at 50 % duty (the fixed drive scheme —
+     * amplitude is controlled via VDC, frequency via 0xFFE1).  With the
+     * rail off and the driver asleep this moves nothing; enabling them
+     * over BLE starts the motor.  Without this, duty stays 0 and the
+     * rail/driver switches appear dead.
+     */
+    drv_pwm_set_duty(0, 50);
+
     /* IMU flash log + ring pump */
     if (imu_log_init() < 0) {
         LOG_ERR("Failed to init IMU log");
