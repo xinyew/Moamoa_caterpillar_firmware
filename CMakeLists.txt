@@ -9,10 +9,12 @@ target_sources(app PRIVATE
     src/main.c
     src/drivers/driver_stbb1_apur.c
     src/drivers/driver_drv8212.c
-    src/drivers/driver_asm330lhh.c
     src/drivers/max5419.c
     src/drivers/driver_pwm.c
     src/drivers/driver_led.c
     src/drivers/driver_vdc_sense.c
     src/interface/ble_interface.c
 )
+
+# For common/imu_shared.h (shared with the FLPR image)
+target_include_directories(app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

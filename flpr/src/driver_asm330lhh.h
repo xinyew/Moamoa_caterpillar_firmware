@@ -47,4 +47,7 @@ int drv_asm330lhh_wait_data(int32_t timeout_ms);
 /** @brief Whether the IMU initialized successfully this boot. */
 bool drv_asm330lhh_ok(void);
 
+/** @brief Raw WHO_AM_I value read during init (0 if never read). */
+uint8_t drv_asm330lhh_whoami(void);
+
 #endif /* DRIVER_ASM330LHH_H */

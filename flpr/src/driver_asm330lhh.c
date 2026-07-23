@@ -121,6 +121,7 @@ static int16_t sign_extend_pair(uint8_t l, uint8_t h)
 static K_SEM_DEFINE(drdy_sem, 0, 1);
 static struct gpio_callback drdy_cb;
 static bool imu_ok;
+static uint8_t last_whoami;
 
 static void drdy_isr(const struct device *port, struct gpio_callback *cb,
                      uint32_t pins)
@@ -197,6 +198,7 @@ int drv_asm330lhh_init(void)
         LOG_ERR("Bad WHO_AM_I (expected 0x%02X)", WHO_AM_I_EXPECT);
         return ret;
     }
+    last_whoami = whoami;
     LOG_INF("ASM330LHHTR on spi21 (WHO_AM_I=0x%02X)", whoami);
 
     /* Configure accelerometer */
@@ -234,6 +236,11 @@ int drv_asm330lhh_init(void)
 bool drv_asm330lhh_ok(void)
 {
     return imu_ok;
+}
+
+uint8_t drv_asm330lhh_whoami(void)
+{
+    return last_whoami;
 }
 
 int drv_asm330lhh_wait_data(int32_t timeout_ms)

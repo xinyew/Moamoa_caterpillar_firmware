@@ -21,7 +21,7 @@
 #include "../drivers/driver_vdc_sense.h"
 #include "../drivers/driver_stbb1_apur.h"
 #include "../drivers/driver_drv8212.h"
-#include "../drivers/driver_asm330lhh.h"
+#include "common/imu_shared.h"
 
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/conn.h>
@@ -257,7 +257,8 @@ static ssize_t on_status_read(struct bt_conn *conn,
     sys_put_le16((uint16_t)CLAMP(vdc_mv, 0, UINT16_MAX), &s[10]);
     s[12] = drv_stbb1_apur_enabled() ? 1 : 0;
     s[13] = drv_drv8212_awake() ? 1 : 0;
-    s[14] = drv_asm330lhh_ok() ? 1 : 0;
+    s[14] = (IMU_SHARED->magic == IMU_SHARED_MAGIC && IMU_SHARED->imu_ok)
+                ? 1 : 0;
     s[15] = 0;
     sys_put_le32((uint32_t)(k_uptime_get() / 1000), &s[16]);
     sys_put_le32(app_reset_cause, &s[20]);

@@ -10,8 +10,9 @@
 
 #include "drivers/driver_stbb1_apur.h"
 #include "drivers/driver_drv8212.h"
-#include "drivers/driver_asm330lhh.h"
 #include "drivers/max5419.h"
+#include "common/imu_shared.h"
+#include <zephyr/sys/barrier.h>
 #include "drivers/driver_pwm.h"
 #include "drivers/driver_led.h"
 #include "drivers/driver_vdc_sense.h"
@@ -98,37 +99,62 @@ int main(void)
         LOG_ERR("Failed to init BLE");
     }
 
-    /* ASM330LHHTR IMU */
-    if (drv_asm330lhh_init() < 0) {
-        LOG_ERR("Failed to init IMU");
-    }
+    /* IMU is owned by the FLPR coprocessor (launched automatically at
+     * boot); samples arrive through the shared-SRAM block.
+     */
 
     /* Alive indicator: 3 × 3 ms flashes per second (timer-driven) */
     drv_led_blink_start();
 
-    uint32_t tick = 0;
+    /* Consume IMU samples published by the FLPR into shared SRAM */
+    struct imu_shared *sh = IMU_SHARED;
+    uint32_t last_count = 0;
+    int64_t last_warn = 0;
+
     while (1) {
-        /* Paced by the IMU data-ready interrupt (12.5 Hz).  The timeout
-         * keeps the loop alive if the IMU is absent or wedged.
-         */
-        if (drv_asm330lhh_wait_data(500) != 0) {
-            LOG_WRN("IMU data-ready timeout");
+        k_msleep(80);
+
+        uint32_t count = sh->sample_count;
+        bool alive = (sh->magic == IMU_SHARED_MAGIC);
+
+        if (!alive || !sh->imu_ok || count == last_count) {
+            int64_t now = k_uptime_get();
+            if (now - last_warn >= 5000) {
+                last_warn = now;
+                if (!alive) {
+                    LOG_WRN("FLPR not running (no shared-memory magic)");
+                } else if (!sh->imu_ok) {
+                    LOG_WRN("FLPR up, IMU init failed (WHO_AM_I=0x%02x)",
+                            sh->whoami);
+                } else {
+                    LOG_WRN("FLPR up but IMU samples stalled at %u", count);
+                }
+            }
             continue;
         }
+        last_count = count;
 
-        struct asm330lhh_data imu;
-        if (drv_asm330lhh_read(&imu) == 0) {
-            int32_t deg = imu.temp / 1000;
-            int32_t mdeg = imu.temp % 1000;
-            if (mdeg < 0) mdeg = -mdeg;
+        /* Seqlock read of the latest sample */
+        int16_t a[3];
+        int32_t g[3];
+        int32_t temp;
+        uint32_t s1, s2;
+        do {
+            s1 = sh->seq;
+            barrier_dmem_fence_full();
+            a[0] = sh->accel_mg[0]; a[1] = sh->accel_mg[1]; a[2] = sh->accel_mg[2];
+            g[0] = sh->gyro_mdps[0]; g[1] = sh->gyro_mdps[1]; g[2] = sh->gyro_mdps[2];
+            temp = sh->temp_mdegc;
+            barrier_dmem_fence_full();
+            s2 = sh->seq;
+        } while ((s1 & 1) != 0 || s1 != s2);
 
-            printk("[%5u] A: %6d %6d %6d mg  |  G: %6d %6d %6d mdps  |  T: %d.%03d C\n",
-                   tick,
-                   imu.accel_x, imu.accel_y, imu.accel_z,
-                   imu.gyro_x,  imu.gyro_y,  imu.gyro_z,
-                   (int)deg, (int)mdeg);
-        }
+        int32_t deg = temp / 1000;
+        int32_t mdeg = temp % 1000;
+        if (mdeg < 0) mdeg = -mdeg;
 
-        tick++;
+        printk("[%5u] A: %6d %6d %6d mg  |  G: %6d %6d %6d mdps  |  T: %d.%03d C\n",
+               count, a[0], a[1], a[2], g[0], g[1], g[2],
+               (int)deg, (int)mdeg);
     }
 }

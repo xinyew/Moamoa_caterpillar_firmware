@@ -12,10 +12,48 @@
 		zephyr,sram = &cpuapp_sram;
 		zephyr,boot-mode = &boot_mode0;
 	};
+
+	/* FLPR coprocessor: code stored at RRAM 0x165000 (outside the
+	 * MCUboot-managed area), copied to SRAM 0x20028000 and started by
+	 * the VPR launcher at app boot.  Mirrors the nordic-flpr snippet.
+	 */
+	soc {
+		reserved-memory {
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			cpuflpr_code_partition: image@165000 {
+				reg = <0x165000 DT_SIZE_K(96)>;
+			};
+		};
+
+		cpuflpr_sram_code_data: memory@20028000 {
+			compatible = "mmio-sram";
+			reg = <0x20028000 DT_SIZE_K(96)>;
+			#address-cells = <1>;
+			#size-cells = <1>;
+			ranges = <0x0 0x20028000 0x18000>;
+		};
+	};
 };
 
+/* App SRAM shrinks to 160 KB — the FLPR owns the top 96 KB (the last
+ * 1 KB of which is the IMU shared block, see common/imu_shared.h)
+ */
 &cpuapp_sram {
 	status = "okay";
+	reg = <0x20000000 DT_SIZE_K(160)>;
+	ranges = <0x0 0x20000000 0x28000>;
+};
+
+&cpuflpr_vpr {
+	status = "okay";
+	execution-memory = <&cpuflpr_sram_code_data>;
+	source-memory = <&cpuflpr_code_partition>;
+	/* VPR bus-master (fetch/DMA) transactions must be secure to
+	 * access secure-by-default memory when the app runs secure
+	 */
+	enable-dma-secure;
 };
 
 &lfxo {
@@ -54,6 +92,11 @@
 	status = "okay";
 };
 
+/* gpiote20 must stay enabled for the app's gpio1 use (driver
+ * requirement), but the app configures no pin interrupts on it — the
+ * FLPR services the IMU DRDY edge (P1.04) through its own GPIOTE
+ * interrupt group.
+ */
 &gpiote20 {
 	status = "okay";
 };

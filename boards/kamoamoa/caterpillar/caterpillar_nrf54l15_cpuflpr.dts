@@ -22,11 +22,14 @@
 
 	cpuflpr_sram: memory@20028000 {
 		compatible = "mmio-sram";
-		/* Size must be increased due to booting from SRAM */
-		reg = <0x20028000 DT_SIZE_K(96)>;
+		/* Boots from SRAM.  96 KB minus the top 1 KB, which is the
+		 * IMU shared block read by the app core
+		 * (common/imu_shared.h, 0x2003FC00).
+		 */
+		reg = <0x20028000 DT_SIZE_K(95)>;
 		#address-cells = <1>;
 		#size-cells = <1>;
-		ranges = <0x0 0x20028000 0x18000>;
+		ranges = <0x0 0x20028000 0x17c00>;
 		status = "okay";
 	};
 };
