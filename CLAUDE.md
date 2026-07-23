@@ -13,11 +13,13 @@
 ## Commands:
 Load nrf connect sdk terminal for env variables, etc, please do this before any command below other than the RTT reading:
 $ nrfutil sdk-manager toolchain launch --ncs-version v3.3.0 --terminal  
-Build FLPR (RISC-V IMU coprocessor) FIRST - its binary gets embedded in
-the app image (so app OTA carries it; no separate FLPR flashing ever):
-$ nrfutil sdk-manager toolchain launch --ncs-version v3.3.0 -- west build -b caterpillar/nrf54l15/cpuflpr --build-dir build-flpr flpr --no-sysbuild
-Then build the app (sysbuild + MCUboot; -DBOARD_ROOT is REQUIRED for the
-CLI sysbuild configure to find the custom board):
+Build the app (sysbuild + MCUboot; -DBOARD_ROOT is REQUIRED for the CLI
+sysbuild configure to find the custom board).  The FLPR (RISC-V IMU
+coprocessor) is rebuilt automatically as part of this build and its
+binary is embedded in the app image (app OTA carries it; no separate
+FLPR build or flashing ever).  Bump flpr/VERSION on FLPR changes -- the
+device reports it via --read ("FLPR fw vX.Y.Z") to prove the new
+coprocessor code is running:
 $ nrfutil sdk-manager toolchain launch --ncs-version v3.3.0 -- west build -b caterpillar/nrf54l15/cpuapp -- -DBOARD_ROOT="C:/Users/xwang3239/Downloads/Moamoa_caterpillar_firmware"
 Flash over SWD (needed once to install MCUboot; erases everything):
 $ west flash --recover
