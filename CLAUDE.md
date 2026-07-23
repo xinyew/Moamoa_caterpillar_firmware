@@ -28,9 +28,9 @@ $ python scripts/ble_control.py --dfu build/Moamoa_caterpillar_firmware/zephyr/z
 Images are auto-signed with the SDK dev key (intentionally open DFU — the
 "not secure" build warning is expected). Bump VERSION before OTA releases.
 Control GUI (motor + IMU config + live plots + log dump; standalone,
-shares only gui/protocol.py with the firmware):
-$ pip install -r gui/requirements.txt
-$ python gui/caterpillar_gui.py
+protocol spec in scripts/protocol.py):
+$ pip install -r scripts/requirements.txt
+$ python scripts/caterpillar_gui.py
 IMU data path (v1.2.0+): FLPR samples at configured ODR (12.5 Hz-6.66 kHz)
 into a shared-SRAM ring; app pump logs full rate to 798 KB RRAM
 (dual-use with OTA secondary slot - a DFU upload overwrites the log)
