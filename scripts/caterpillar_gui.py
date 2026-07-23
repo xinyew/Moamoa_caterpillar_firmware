@@ -321,7 +321,7 @@ class MainWindow(QMainWindow):
         self.spin_freq.setRange(P.FREQ_MIN_HZ, P.FREQ_MAX_HZ)
         self.spin_freq.setValue(150)
         self.spin_freq.setSuffix(" Hz")
-        btn_freq = QPushButton("Set")
+        self.btn_freq = btn_freq = QPushButton("Set")
         btn_freq.clicked.connect(lambda: asyncio.ensure_future(
             self.ble.set_freq(self.spin_freq.value())))
         self.spin_volt = QDoubleSpinBox()
@@ -330,7 +330,7 @@ class MainWindow(QMainWindow):
         self.spin_volt.setSingleStep(0.1)
         self.spin_volt.setDecimals(2)
         self.spin_volt.setSuffix(" V")
-        btn_volt = QPushButton("Set")
+        self.btn_volt = btn_volt = QPushButton("Set")
         btn_volt.clicked.connect(lambda: asyncio.ensure_future(
             self.ble.set_volt(round(self.spin_volt.value() * 1000))))
         self.chk_rail = QCheckBox("Rail on")
@@ -368,7 +368,7 @@ class MainWindow(QMainWindow):
         self.cmb_gfs = QComboBox()
         for idx, dps in P.GYRO_FS_DPS.items():
             self.cmb_gfs.addItem(f"±{dps} dps", idx)
-        btn_apply = QPushButton("Apply config")
+        self.btn_apply = btn_apply = QPushButton("Apply config")
         btn_apply.clicked.connect(
             lambda: asyncio.ensure_future(self._apply_imu_cfg()))
         self.btn_stream = QPushButton("Start stream")
@@ -399,7 +399,7 @@ class MainWindow(QMainWindow):
         self.btn_log.setCheckable(True)
         self.btn_log.clicked.connect(
             lambda: asyncio.ensure_future(self._toggle_log()))
-        btn_erase = QPushButton("Erase")
+        self.btn_erase = btn_erase = QPushButton("Erase")
         btn_erase.clicked.connect(lambda: asyncio.ensure_future(
             self._erase_log()))
         self.bar_log = QProgressBar()
@@ -457,6 +457,24 @@ class MainWindow(QMainWindow):
         root.addLayout(right, 1)
         self.setCentralWidget(central)
 
+        # Everything that talks to the device is disabled until a
+        # connection exists.  Deliberately NOT in this list: the dump
+        # viewer buttons (btn_plot / btn_open work offline on saved
+        # files) and the console.
+        self._conn_widgets = [
+            self.chk_led, self.btn_tput,
+            self.spin_freq, self.btn_freq, self.spin_volt, self.btn_volt,
+            self.chk_rail, self.chk_drv,
+            self.cmb_odr, self.cmb_content, self.cmb_afs, self.cmb_gfs,
+            self.btn_apply, self.btn_stream,
+            self.cmb_policy, self.btn_log, self.btn_erase, self.btn_dump,
+        ]
+        self._set_connected_ui(False)
+
+    def _set_connected_ui(self, connected: bool):
+        for w in self._conn_widgets:
+            w.setEnabled(connected)
+
     # ---- helpers --------------------------------------------------------
 
     def log(self, text: str):
@@ -469,6 +487,7 @@ class MainWindow(QMainWindow):
         self._status_timer.stop()
         self._plot_timer.stop()
         self.btn_stream.setChecked(False)
+        self._set_connected_ui(False)
         self.log("Disconnected.")
 
     # ---- async actions --------------------------------------------------
@@ -482,6 +501,7 @@ class MainWindow(QMainWindow):
             if await self.ble.connect():
                 self.lbl_conn.setText("connected")
                 self.btn_connect.setText("Disconnect")
+                self._set_connected_ui(True)
                 self._status_timer.start()
                 await self._poll_status()
         except Exception as e:
