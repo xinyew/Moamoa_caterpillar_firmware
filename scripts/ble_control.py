@@ -165,13 +165,18 @@ async def read_status(client: BleakClient):
      rail, drv, imu, _rsvd, uptime, cause) = struct.unpack(
         STATUS_FMT, data[:struct.calcsize(STATUS_FMT)])
 
-    if pkt_ver not in (1, 2):
+    if pkt_ver not in (1, 2, 3):
         print(f"(unknown status packet version {pkt_ver}, raw: {data.hex()})")
         return
 
     flpr_ver = None
     if pkt_ver >= 2 and len(data) >= 28:
         (flpr_ver,) = struct.unpack_from("<I", data, 24)
+
+    imu_v3 = None
+    if pkt_ver >= 3 and len(data) >= 44:
+        imu_v3 = struct.unpack_from("<4B3I", data, 28)  # odr, content,
+        # log_active, log_policy, log_bytes, log_capacity, overruns
 
     causes = ", ".join(n for b, n in RESET_BITS.items() if cause & (1 << b))
     print(f"Device status:")
@@ -189,6 +194,15 @@ async def read_status(client: BleakClient):
           f"{'AWAKE' if drv else 'SLEEP'}   IMU {'ok' if imu else 'absent'}")
     print(f"  uptime     {uptime} s")
     print(f"  last reset 0x{cause:08x}" + (f" ({causes})" if causes else ""))
+    if imu_v3 is not None:
+        odr, content, log_on, log_policy, log_bytes, log_cap, overruns = imu_v3
+        odr_hz = {1: 12.5, 2: 26, 3: 52, 4: 104, 5: 208, 6: 416,
+                  7: 833, 8: 1660, 9: 3330, 10: 6660}.get(odr, "?")
+        what = {1: "accel", 2: "gyro", 3: "accel+gyro"}.get(content, "?")
+        pol = "circular" if log_policy else "stop-when-full"
+        print(f"  IMU cfg    {odr_hz} Hz, {what}, overruns {overruns}")
+        print(f"  IMU log    {'RECORDING' if log_on else 'stopped'} ({pol}), "
+              f"{log_bytes}/{log_cap} B")
 
 
 async def one_shot(address: str, hz: int | None, volts: float | None,

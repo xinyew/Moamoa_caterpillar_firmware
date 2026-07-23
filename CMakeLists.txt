@@ -48,6 +48,8 @@ target_include_directories(app PRIVATE ${FLPR_GEN_DIR})
 target_sources(app PRIVATE
     src/main.c
     src/flpr_launch.c
+    src/imu_pump.c
+    src/imu_log.c
     src/drivers/driver_stbb1_apur.c
     src/drivers/driver_drv8212.c
     src/drivers/max5419.c

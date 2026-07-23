@@ -15,8 +15,9 @@
 
 };
 
-/* App SRAM shrinks to 160 KB — the FLPR owns the top 96 KB (the last
- * 1 KB of which is the IMU shared block, see common/imu_shared.h)
+/* App SRAM shrinks to 160 KB — above it sit the FLPR's private 56 KB
+ * (0x20028000) and the 40 KB shared IMU control block + sample ring
+ * (0x20036000, see common/imu_shared.h)
  */
 &cpuapp_sram {
 	status = "okay";

@@ -34,26 +34,16 @@ int drv_stbb1_apur_init(void)
         return -ENODEV;
     }
 
+    /* Boot with the rail OFF — sessions enable it explicitly over BLE */
     ret = gpio_pin_configure(DCDC_EN_PORT, DCDC_EN_PIN,
-                              GPIO_OUTPUT_ACTIVE);
+                              GPIO_OUTPUT_INACTIVE);
     if (ret < 0) {
         LOG_ERR("Failed to configure DCDC_EN (P2.03): %d", ret);
         return ret;
     }
 
-    /*
-     * Read-back verification — on nRF54 the input buffer is always
-     * connected even in output mode, so gpio_pin_get() returns the
-     * real physical pin level.
-     */
-    int level = gpio_pin_get(DCDC_EN_PORT, DCDC_EN_PIN);
-    LOG_INF("STBB1-APUR DCDC_EN (P2.03): %s (read-back=%d)",
-            level > 0 ? "HIGH" : "LOW", level);
-    if (level <= 0) {
-        LOG_WRN("DCDC_EN read-back is LOW — check for short or floating pin");
-    }
-
-    rail_on = true;
+    LOG_INF("STBB1-APUR DCDC_EN (P2.03): LOW (rail off at boot)");
+    rail_on = false;
     return 0;
 }
 

@@ -3,11 +3,12 @@
  *
  * Communicates over SPI (spi21, mode 3, 8 MHz):
  *   SCLK P1.10, MOSI→SDI P1.13, MISO←SDO P1.14, CS P1.09 (GPIO, active-low)
- * Accelerometer: 12.5 Hz, ±2 g
- * Gyroscope:     12.5 Hz, ±250 dps
+ * ODR / full-scale / content are runtime-configurable
+ * (drv_asm330lhh_configure); output is raw sensor LSB.
  */
 
 #include "driver_asm330lhh.h"
+#include "common/imu_shared.h"
 
 #include <zephyr/drivers/spi.h>
 #include <zephyr/drivers/gpio.h>
@@ -48,28 +49,24 @@ static struct spi_config spi_cfg = {
 
 #define WHO_AM_I_EXPECT 0x6B
 
-/* CTRL1_XL: 12.5 Hz ODR, ±2 g */
-#define CTRL1_XL_VAL    0x10
-
-/* CTRL2_G: 12.5 Hz ODR, ±250 dps */
-#define CTRL2_G_VAL     0x10
-
 /* CTRL3_C: BDU (bit 6) + IF_INC (bit 2) — latch L/H, auto-increment addr */
 #define CTRL3_C_VAL     0x44
 
 /* CTRL4_C: I2C_disable (bit 2) — SPI-only, ignore noise on the I2C pads */
 #define CTRL4_C_VAL     0x04
 
-/* INT1_CTRL: route gyro data-ready to the INT1 pad (bit 1) */
-#define INT1_CTRL_VAL   0x02
+/* INT1_CTRL bits: 0 = accel DRDY, 1 = gyro DRDY */
+#define INT1_DRDY_XL    0x01
+#define INT1_DRDY_G     0x02
 
 /* INT1 pad wired to P1.04 (active-high) */
 #define INT1_PORT       DEVICE_DT_GET(DT_NODELABEL(gpio1))
 #define INT1_PIN        4
 
-/* Sensitivity */
-#define ACCEL_SENS      61      /* 0.061 mg/LSB  * 1000 */
-#define GYRO_SENS       875     /* 8.75 mdps/LSB * 100  */
+/* FS_XL[3:2] register bits, indexed by cfg 0..3 = ±2/±4/±8/±16 g
+ * (register coding is non-monotonic: 00=2g 01=16g 10=4g 11=8g)
+ */
+static const uint8_t fs_xl_bits[4] = { 0x0, 0x2, 0x3, 0x1 };
 
 /* -------------------------------------------------------------------------- */
 /*  Helpers                                                                   */
@@ -201,14 +198,6 @@ int drv_asm330lhh_init(void)
     last_whoami = whoami;
     LOG_INF("ASM330LHHTR on spi21 (WHO_AM_I=0x%02X)", whoami);
 
-    /* Configure accelerometer */
-    ret = reg_write(REG_CTRL1_XL, CTRL1_XL_VAL);
-    if (ret < 0) { LOG_ERR("CTRL1_XL: %d", ret); return ret; }
-
-    /* Configure gyroscope */
-    ret = reg_write(REG_CTRL2_G, CTRL2_G_VAL);
-    if (ret < 0) { LOG_ERR("CTRL2_G: %d", ret); return ret; }
-
     /* Enable block-data-update */
     ret = reg_write(REG_CTRL3_C, CTRL3_C_VAL);
     if (ret < 0) { LOG_ERR("CTRL3_C: %d", ret); return ret; }
@@ -217,19 +206,56 @@ int drv_asm330lhh_init(void)
     ret = reg_write(REG_CTRL4_C, CTRL4_C_VAL);
     if (ret < 0) { LOG_ERR("CTRL4_C: %d", ret); return ret; }
 
-    /* Route gyro data-ready to INT1 and arm the P1.04 interrupt */
-    ret = reg_write(REG_INT1_CTRL, INT1_CTRL_VAL);
-    if (ret < 0) { LOG_ERR("INT1_CTRL: %d", ret); return ret; }
-
     ret = drdy_int_setup();
     if (ret < 0) { LOG_ERR("INT1 GPIO setup: %d", ret); return ret; }
 
-    /* Clear any already-latched DRDY so the first rising edge fires */
-    struct asm330lhh_data scratch;
-    (void)drv_asm330lhh_read(&scratch);
-
-    LOG_INF("IMU: XL 12.5Hz ±2g, G 12.5Hz ±250dps, BDU, DRDY→INT1");
+    /* Sampling stays off (ODR 0) until drv_asm330lhh_configure() */
     imu_ok = true;
+    return 0;
+}
+
+int drv_asm330lhh_configure(uint8_t odr_code, uint8_t content,
+                            uint8_t accel_fs, uint8_t gyro_fs)
+{
+    int ret;
+
+    if (odr_code < IMU_ODR_12HZ5 || odr_code > IMU_ODR_6660HZ ||
+        (content & ~(IMU_CONTENT_ACCEL | IMU_CONTENT_GYRO)) != 0 ||
+        content == 0 || accel_fs > 3 || gyro_fs > 3) {
+        return -EINVAL;
+    }
+
+    bool accel_on = (content & IMU_CONTENT_ACCEL) != 0;
+    bool gyro_on  = (content & IMU_CONTENT_GYRO) != 0;
+
+    /* Disabled sensor gets ODR 0000 = power-down */
+    uint8_t ctrl1 = accel_on ? (uint8_t)((odr_code << 4) |
+                                         (fs_xl_bits[accel_fs] << 2)) : 0;
+    uint8_t ctrl2 = gyro_on  ? (uint8_t)((odr_code << 4) |
+                                         (gyro_fs << 2)) : 0;
+
+    /* DRDY source: gyro when enabled (accel DRDY otherwise) — with a
+     * shared ODR both assert at the same rate.
+     */
+    uint8_t int1 = gyro_on ? INT1_DRDY_G : INT1_DRDY_XL;
+
+    ret = reg_write(REG_CTRL1_XL, ctrl1);
+    if (ret == 0) ret = reg_write(REG_CTRL2_G, ctrl2);
+    if (ret == 0) ret = reg_write(REG_INT1_CTRL, int1);
+    if (ret < 0) {
+        LOG_ERR("configure: %d", ret);
+        return ret;
+    }
+
+    /* Clear any already-latched DRDY so the next edge fires, and drop
+     * a stale wakeup from the previous config.
+     */
+    struct asm330lhh_raw scratch;
+    (void)drv_asm330lhh_read(&scratch);
+    k_sem_reset(&drdy_sem);
+
+    LOG_INF("IMU cfg: odr_code=%u content=0x%x fs_xl=%u fs_g=%u",
+            odr_code, content, accel_fs, gyro_fs);
     return 0;
 }
 
@@ -251,7 +277,7 @@ int drv_asm330lhh_wait_data(int32_t timeout_ms)
     return 0;
 }
 
-int drv_asm330lhh_read(struct asm330lhh_data *data)
+int drv_asm330lhh_read(struct asm330lhh_raw *data)
 {
     uint8_t raw[14];  /* TEMP_L..OUTZ_H_A */
     int ret;
@@ -266,19 +292,13 @@ int drv_asm330lhh_read(struct asm330lhh_data *data)
         return ret;
     }
 
-    /* Temperature: (raw / 256) + 25, scaled to millideg C */
-    int16_t raw_temp = sign_extend_pair(raw[0], raw[1]);
-    data->temp = ((int32_t)raw_temp * 1000) / 256 + 25000;
-
-    /* Gyroscope (raw[2]..raw[7]) */
-    data->gyro_x = (int32_t)sign_extend_pair(raw[2], raw[3]) * GYRO_SENS / 100;
-    data->gyro_y = (int32_t)sign_extend_pair(raw[4], raw[5]) * GYRO_SENS / 100;
-    data->gyro_z = (int32_t)sign_extend_pair(raw[6], raw[7]) * GYRO_SENS / 100;
-
-    /* Accelerometer (raw[8]..raw[13]) */
-    data->accel_x = (int16_t)((int32_t)sign_extend_pair(raw[8],  raw[9])  * ACCEL_SENS / 1000);
-    data->accel_y = (int16_t)((int32_t)sign_extend_pair(raw[10], raw[11]) * ACCEL_SENS / 1000);
-    data->accel_z = (int16_t)((int32_t)sign_extend_pair(raw[12], raw[13]) * ACCEL_SENS / 1000);
+    data->temp_raw = sign_extend_pair(raw[0], raw[1]);
+    data->gx = sign_extend_pair(raw[2],  raw[3]);
+    data->gy = sign_extend_pair(raw[4],  raw[5]);
+    data->gz = sign_extend_pair(raw[6],  raw[7]);
+    data->ax = sign_extend_pair(raw[8],  raw[9]);
+    data->ay = sign_extend_pair(raw[10], raw[11]);
+    data->az = sign_extend_pair(raw[12], raw[13]);
 
     return 0;
 }

@@ -1,6 +1,11 @@
 /*
  * Caterpillar — Motor Control + IMU Firmware
  * Custom nRF54L15 board (caterpillar/nrf54l15/cpuapp)
+ *
+ * Boot leaves the motor idle (rail off, driver asleep, duty 0): every
+ * run is started explicitly over BLE by the GUI or script.  IMU
+ * sampling runs on the FLPR coprocessor; the pump thread drains its
+ * shared-SRAM ring into the flash log and the live BLE stream.
  */
 
 #include <zephyr/kernel.h>
@@ -12,18 +17,19 @@
 #include "drivers/driver_drv8212.h"
 #include "drivers/max5419.h"
 #include "common/imu_shared.h"
-#include <zephyr/sys/barrier.h>
 #include "drivers/driver_pwm.h"
 #include "drivers/driver_led.h"
 #include "drivers/driver_vdc_sense.h"
 #include "interface/ble_interface.h"
+#include "imu_pump.h"
+#include "imu_log.h"
 #include "flpr_launch.h"
 
 LOG_MODULE_REGISTER(caterpillar_main, LOG_LEVEL_DBG);
 
-/* Motor rail (VDC) target — applied via MAX5419 digipot before the
- * STBB1-APUR is enabled, so the rail never runs at the digipot's
- * power-on default (midscale ≈ 1.0 V) or a stale NV value.
+/* Motor rail (VDC) pre-programmed into the digipot at boot so the rail
+ * comes up at a known-safe voltage when a session enables it (never
+ * the digipot's power-on default of ~1.0 V or a stale NV value).
  */
 #define MOTOR_VDC_V  3.1f
 
@@ -34,8 +40,7 @@ int main(void)
 {
     printk("\n=== Caterpillar Boot ===\n");
 
-    /* Announce why we booted — makes brown-out reset loops visible
-     * (a silent reset shows as ~65 ms of motor dropout otherwise).
+    /* Announce why we booted — makes brown-out reset loops visible.
      * Kept in app_reset_cause for the BLE status characteristic.
      */
     if (hwinfo_get_reset_cause(&app_reset_cause) == 0) {
@@ -61,66 +66,51 @@ int main(void)
         LOG_ERR("Failed to init VDC sense");
     }
 
-    /* MAX5419LETA digipot — program VDC feedback before DCDC enable */
-    bool vdc_ok = (max5419_init() == 0) &&
-                  (max5419_set_voltage(MOTOR_VDC_V) == 0);
-
-    /* STBB1-APUR DCDC converter — only enable at a known voltage */
-    if (!vdc_ok) {
-        LOG_ERR("Digipot voltage set failed — leaving motor rail disabled");
-    } else if (drv_stbb1_apur_init() < 0) {
-        LOG_ERR("Failed to enable DCDC");
-        vdc_ok = false;
+    /* MAX5419LETA digipot — pre-program a safe VDC before any enable */
+    if (max5419_init() != 0 || max5419_set_voltage(MOTOR_VDC_V) != 0) {
+        LOG_ERR("Digipot voltage set failed");
     }
 
-    /* DRV8212P motor driver — wake (nSLEEP = HIGH) */
+    /* Motor chain boots INACTIVE: rail off, driver asleep, duty 0 */
+    if (drv_stbb1_apur_init() < 0) {
+        LOG_ERR("Failed to init DCDC enable pin");
+    }
     if (drv_drv8212_init() < 0) {
         LOG_ERR("Failed to init DRV8212");
     }
-
-    /* PWM20 — configured at default frequency, 0 % duty (coast) */
     if (drv_pwm_init() < 0) {
         LOG_ERR("Failed to init PWM");
     }
 
-    /* Auto-start: forward drive at 50 % once all rails are up.
-     * Remove this to keep the motor idle until commanded over BLE.
-     */
-    if (vdc_ok) {
-        /* Converter settle, then verify the rail against the target */
-        k_msleep(50);
-        int32_t vdc_mv = 0;
-        if (drv_vdc_sense_read_mv(&vdc_mv) == 0) {
-            LOG_INF("VDC measured: %d mV (target %d mV)",
-                    vdc_mv, (int)(MOTOR_VDC_V * 1000.0f));
-        }
-
-        drv_pwm_set_duty(0, 50);
+    /* IMU flash log + ring pump */
+    if (imu_log_init() < 0) {
+        LOG_ERR("Failed to init IMU log");
     }
+    (void)imu_pump_init();
 
-    /* BLE GATT server — remote frequency control */
+    /* BLE GATT server — full control + data surface */
     if (ble_interface_init() < 0) {
         LOG_ERR("Failed to init BLE");
     }
 
-    /* IMU is owned by the FLPR coprocessor (launched automatically at
-     * boot); samples arrive through the shared-SRAM block.
-     */
-
     /* Alive indicator: 3 × 3 ms flashes per second (timer-driven) */
     drv_led_blink_start();
 
-    /* Consume IMU samples published by the FLPR into shared SRAM */
+    /* Health monitor: IMU pipeline problems become BLE messages (and
+     * local log lines).  The per-sample console stream is gone — data
+     * now flows through the flash log and the 0xFFE9 live stream.
+     */
     struct imu_shared *sh = IMU_SHARED;
-    uint32_t last_count = 0;
-    int64_t last_warn = 0;
     bool flpr_announced = false;
+    uint32_t last_drained = 0;
+    uint32_t last_overrun = 0;
+    int64_t last_warn = 0;
 
     while (1) {
-        k_msleep(80);
+        k_msleep(1000);
 
-        uint32_t count = sh->sample_count;
         bool alive = (sh->magic == IMU_SHARED_MAGIC);
+        int64_t now = k_uptime_get();
 
         if (alive && !flpr_announced) {
             flpr_announced = true;
@@ -129,44 +119,27 @@ int main(void)
                     (v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF);
         }
 
-        if (!alive || !sh->imu_ok || count == last_count) {
-            int64_t now = k_uptime_get();
-            if (now - last_warn >= 5000) {
-                last_warn = now;
-                if (!alive) {
-                    LOG_WRN("FLPR not running (no shared-memory magic)");
-                } else if (!sh->imu_ok) {
-                    LOG_WRN("FLPR up, IMU init failed (WHO_AM_I=0x%02x)",
-                            sh->whoami);
-                } else {
-                    LOG_WRN("FLPR up but IMU samples stalled at %u", count);
-                }
-            }
-            continue;
+        uint32_t drained = imu_pump_drained();
+        uint32_t overrun = imu_pump_overrun();
+
+        if (overrun != last_overrun) {
+            ble_msg("IMU ring overrun: %u samples lost (total %u)",
+                    overrun - last_overrun, overrun);
+            last_overrun = overrun;
         }
-        last_count = count;
 
-        /* Seqlock read of the latest sample */
-        int16_t a[3];
-        int32_t g[3];
-        int32_t temp;
-        uint32_t s1, s2;
-        do {
-            s1 = sh->seq;
-            barrier_dmem_fence_full();
-            a[0] = sh->accel_mg[0]; a[1] = sh->accel_mg[1]; a[2] = sh->accel_mg[2];
-            g[0] = sh->gyro_mdps[0]; g[1] = sh->gyro_mdps[1]; g[2] = sh->gyro_mdps[2];
-            temp = sh->temp_mdegc;
-            barrier_dmem_fence_full();
-            s2 = sh->seq;
-        } while ((s1 & 1) != 0 || s1 != s2);
-
-        int32_t deg = temp / 1000;
-        int32_t mdeg = temp % 1000;
-        if (mdeg < 0) mdeg = -mdeg;
-
-        printk("[%5u] A: %6d %6d %6d mg  |  G: %6d %6d %6d mdps  |  T: %d.%03d C\n",
-               count, a[0], a[1], a[2], g[0], g[1], g[2],
-               (int)deg, (int)mdeg);
+        if (now - last_warn >= 5000) {
+            if (!alive) {
+                last_warn = now;
+                ble_msg("FLPR not running (no shared-memory magic)");
+            } else if (!sh->imu_ok) {
+                last_warn = now;
+                ble_msg("IMU init failed (WHO_AM_I=0x%02x)", sh->whoami);
+            } else if (drained == last_drained) {
+                last_warn = now;
+                ble_msg("IMU samples stalled at %u", drained);
+            }
+        }
+        last_drained = drained;
     }
 }

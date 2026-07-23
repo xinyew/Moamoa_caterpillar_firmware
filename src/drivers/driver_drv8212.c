@@ -36,23 +36,16 @@ int drv_drv8212_init(void)
         return -ENODEV;
     }
 
-    /* Drive HIGH to wake the driver (nSLEEP de-asserted) */
+    /* Boot asleep (nSLEEP LOW) — sessions wake it explicitly over BLE */
     ret = gpio_pin_configure(DRV8212_SLEEP_PORT, DRV8212_SLEEP_PIN,
-                              GPIO_OUTPUT_HIGH);
+                              GPIO_OUTPUT_LOW);
     if (ret < 0) {
         LOG_ERR("Failed to configure DRV8212 nSLEEP (P1.06): %d", ret);
         return ret;
     }
 
-    /* Read-back verification */
-    int level = gpio_pin_get(DRV8212_SLEEP_PORT, DRV8212_SLEEP_PIN);
-    LOG_INF("DRV8212 nSLEEP (P1.06): %s (read-back=%d)",
-            level > 0 ? "HIGH (awake)" : "LOW (sleep)", level);
-    if (level <= 0) {
-        LOG_WRN("DRV8212 nSLEEP is LOW — driver is asleep, motor won't spin");
-    }
-
-    drv_awake = true;
+    LOG_INF("DRV8212 nSLEEP (P1.06): LOW (asleep at boot)");
+    drv_awake = false;
     return 0;
 }
 

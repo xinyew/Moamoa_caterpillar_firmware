@@ -14,4 +14,13 @@
  */
 int ble_interface_init(void);
 
+/**
+ * @brief Send a printf-style warning/error line to the message
+ *        characteristic (0xFFEC) and mirror it to the local log.
+ *
+ * Silently dropped when no client is subscribed.  Callable from any
+ * thread after ble_interface_init().
+ */
+void ble_msg(const char *fmt, ...);
+
 #endif /* BLE_INTERFACE_H */
