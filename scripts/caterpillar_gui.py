@@ -379,10 +379,6 @@ class MainWindow(QMainWindow):
         self.btn_apply = btn_apply = QPushButton("Apply config")
         btn_apply.clicked.connect(
             lambda: asyncio.ensure_future(self._apply_imu_cfg()))
-        self.btn_stream = QPushButton("Start stream")
-        self.btn_stream.setCheckable(True)
-        self.btn_stream.clicked.connect(
-            lambda: asyncio.ensure_future(self._toggle_stream()))
         self.lbl_stream = QLabel("stream: off")
         il.addWidget(QLabel("ODR"), 0, 0)
         il.addWidget(self.cmb_odr, 0, 1)
@@ -392,8 +388,7 @@ class MainWindow(QMainWindow):
         il.addWidget(self.cmb_afs, 2, 1)
         il.addWidget(QLabel("Gyro FS"), 3, 0)
         il.addWidget(self.cmb_gfs, 3, 1)
-        il.addWidget(btn_apply, 4, 0)
-        il.addWidget(self.btn_stream, 4, 1)
+        il.addWidget(btn_apply, 4, 0, 1, 2)
         il.addWidget(self.lbl_stream, 5, 0, 1, 2)
         left.addWidget(imu_box)
 
@@ -403,10 +398,10 @@ class MainWindow(QMainWindow):
         self.cmb_policy.addItem("stop when full", P.LOG_POLICY_STOP)
         self.cmb_policy.addItem("circular (keep newest)",
                                 P.LOG_POLICY_CIRCULAR)
-        self.btn_log = QPushButton("Start logging")
+        self.btn_log = QPushButton("Start session (log + stream)")
         self.btn_log.setCheckable(True)
         self.btn_log.clicked.connect(
-            lambda: asyncio.ensure_future(self._toggle_log()))
+            lambda: asyncio.ensure_future(self._toggle_session()))
         self.btn_erase = btn_erase = QPushButton("Erase")
         btn_erase.clicked.connect(lambda: asyncio.ensure_future(
             self._erase_log()))
@@ -474,7 +469,7 @@ class MainWindow(QMainWindow):
             self.spin_freq, self.btn_freq, self.spin_volt, self.btn_volt,
             self.chk_rail, self.chk_drv,
             self.cmb_odr, self.cmb_content, self.cmb_afs, self.cmb_gfs,
-            self.btn_apply, self.btn_stream,
+            self.btn_apply,
             self.cmb_policy, self.btn_log, self.btn_erase, self.btn_dump,
         ]
         self._set_connected_ui(False)
@@ -494,7 +489,8 @@ class MainWindow(QMainWindow):
         self.btn_connect.setText("Connect")
         self._status_timer.stop()
         self._plot_timer.stop()
-        self.btn_stream.setChecked(False)
+        self.btn_log.setChecked(False)
+        self.btn_log.setText("Start session (log + stream)")
         self._set_connected_ui(False)
         self.log("Disconnected.")
 
@@ -541,15 +537,15 @@ class MainWindow(QMainWindow):
         self.bar_log.setValue(min(st.log_bytes, st.log_capacity))
         if st.log_active != self.btn_log.isChecked():
             self.btn_log.setChecked(st.log_active)
-            self.btn_log.setText("Stop logging" if st.log_active
-                                 else "Start logging")
+            self.btn_log.setText("Stop session" if st.log_active
+                                 else "Start session (log + stream)")
 
     async def _run_tput(self):
         if not self.ble.connected:
             return
-        if self.btn_stream.isChecked():
-            self.log("Stop the live stream first — it would skew the "
-                     "throughput measurement.")
+        if self.btn_log.isChecked():
+            self.log("Stop the session first — the live stream would "
+                     "skew the throughput measurement.")
             return
         self.btn_tput.setEnabled(False)
         self.log("Throughput test running (64 KiB burst)...")
@@ -571,24 +567,38 @@ class MainWindow(QMainWindow):
                                    self.cmb_content.currentData(),
                                    self._afs, self._gfs)
 
-    async def _toggle_stream(self):
+    async def _start_session(self):
+        """One click = flash logging + live stream together."""
+        await self.ble.log_cmd(P.LOG_CMD_START, self.cmb_policy.currentData())
+        self._t = np.zeros(0)
+        self._acc = np.zeros((0, 3))
+        self._gyr = np.zeros((0, 3))
+        self._stream_n = 0
+        self._stream_t0 = time.monotonic()
+        self._stream_dropped = 0
+        await self.ble.stream_start()
+        self._plot_timer.start()
+        self.btn_log.setText("Stop session")
+        self.log(f"Session started ({self.cmb_policy.currentText()})")
+
+    async def _stop_session(self):
+        self._plot_timer.stop()
+        await self.ble.stream_stop()
+        await self.ble.log_cmd(P.LOG_CMD_STOP)
+        self.btn_log.setText("Start session (log + stream)")
+        self.log("Session stopped")
+
+    async def _toggle_session(self):
         if not self.ble.connected:
-            self.btn_stream.setChecked(False)
+            self.btn_log.setChecked(False)
             return
-        if self.btn_stream.isChecked():
-            self._t = np.zeros(0)
-            self._acc = np.zeros((0, 3))
-            self._gyr = np.zeros((0, 3))
-            self._stream_n = 0
-            self._stream_t0 = time.monotonic()
-            self._stream_dropped = 0
-            await self.ble.stream_start()
-            self.btn_stream.setText("Stop stream")
-            self._plot_timer.start()
-        else:
-            await self.ble.stream_stop()
-            self.btn_stream.setText("Start stream")
-            self._plot_timer.stop()
+        try:
+            if self.btn_log.isChecked():
+                await self._start_session()
+            else:
+                await self._stop_session()
+        except Exception as e:
+            self.log(f"Session command failed: {e}")
 
     def on_stream_pkt(self, _char, data: bytearray):
         try:
@@ -630,44 +640,25 @@ class MainWindow(QMainWindow):
             f"stream: {rate:.0f} samples/s shown, "
             f"{self._stream_dropped} dropped")
 
-    async def _toggle_log(self):
-        if not self.ble.connected:
-            self.btn_log.setChecked(False)
-            return
-        try:
-            if self.btn_log.isChecked():
-                await self.ble.log_cmd(P.LOG_CMD_START,
-                                       self.cmb_policy.currentData())
-                self.btn_log.setText("Stop logging")
-                self.log("Logging started "
-                         f"({self.cmb_policy.currentText()})")
-            else:
-                await self.ble.log_cmd(P.LOG_CMD_STOP)
-                self.btn_log.setText("Start logging")
-                self.log("Logging stopped")
-        except Exception as e:
-            self.log(f"Log command failed: {e}")
-
     async def _erase_log(self):
         if not self.ble.connected:
             return
+        if self.btn_log.isChecked():
+            await self._stop_session()
+            self.btn_log.setChecked(False)
         await self.ble.log_cmd(P.LOG_CMD_ERASE)
-        self.btn_log.setChecked(False)
-        self.btn_log.setText("Start logging")
         self.log("Log erased")
 
     async def _dump_log(self):
         if not self.ble.connected:
             return
+        if self.btn_log.isChecked():
+            await self._stop_session()
+            self.btn_log.setChecked(False)
         state = await self.ble.log_state()
         if state.bytes_stored == 0:
             self.log("Log is empty — nothing to dump.")
             return
-        if state.active:
-            await self.ble.log_cmd(P.LOG_CMD_STOP)
-            self.btn_log.setChecked(False)
-            self.btn_log.setText("Start logging")
-            self.log("Logging stopped for dump")
 
         path, _ = QFileDialog.getSaveFileName(
             self, "Save IMU log", f"imu_log_{time.strftime('%Y%m%d_%H%M%S')}",
