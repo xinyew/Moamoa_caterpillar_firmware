@@ -38,6 +38,46 @@ PLOT_WINDOW_S = 5.0
 PLOT_MAX_POINTS = 20000
 
 
+class DumpPlotWindow(QWidget):
+    """Full-log viewer: accel + gyro vs time, linked x-axis, auto-
+    downsampled so multi-hundred-thousand-sample logs pan smoothly."""
+
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("IMU log viewer")
+        self.resize(1000, 620)
+        lay = QVBoxLayout(self)
+        self.lbl = QLabel("—")
+        lay.addWidget(self.lbl)
+
+        self.p_acc = pg.PlotWidget(title="Accelerometer [g]")
+        self.p_gyr = pg.PlotWidget(title="Gyroscope [dps]")
+        for p in (self.p_acc, self.p_gyr):
+            p.showGrid(x=True, y=True, alpha=0.2)
+            p.addLegend(offset=(10, 10))
+            p.setDownsampling(auto=True, mode="peak")
+            p.setClipToView(True)
+        self.p_gyr.setXLink(self.p_acc)
+        self.p_gyr.setLabel("bottom", "time", units="s")
+        lay.addWidget(self.p_acc, 1)
+        lay.addWidget(self.p_gyr, 1)
+
+        colors = ("#e6194b", "#3cb44b", "#4363d8")
+        self.c_acc = [self.p_acc.plot(pen=pg.mkPen(c, width=1), name=n)
+                      for c, n in zip(colors, ("ax", "ay", "az"))]
+        self.c_gyr = [self.p_gyr.plot(pen=pg.mkPen(c, width=1), name=n)
+                      for c, n in zip(colors, ("gx", "gy", "gz"))]
+
+    def set_data(self, t, acc, gyr, title: str):
+        self.lbl.setText(title)
+        for i, c in enumerate(self.c_acc):
+            c.setData(t, acc[:, i])
+        for i, c in enumerate(self.c_gyr):
+            c.setData(t, gyr[:, i])
+        self.p_acc.autoRange()
+        self.p_gyr.autoRange()
+
+
 class BleWorker:
     """Owns the BleakClient and all GATT traffic (runs on the qasync loop)."""
 
@@ -196,6 +236,8 @@ class MainWindow(QMainWindow):
         self._stream_dropped = 0
         self._afs = 0
         self._gfs = 0
+        self._dump_data = None       # (t, acc_g, gyr_dps, title)
+        self._dump_win: DumpPlotWindow | None = None
 
         self._build_ui()
 
@@ -325,6 +367,11 @@ class MainWindow(QMainWindow):
             lambda: asyncio.ensure_future(self._dump_log()))
         self.bar_dump = QProgressBar()
         self.bar_dump.setVisible(False)
+        self.btn_plot = QPushButton("Plot last dump")
+        self.btn_plot.setEnabled(False)
+        self.btn_plot.clicked.connect(self._plot_dump)
+        btn_open = QPushButton("Open .npz…")
+        btn_open.clicked.connect(self._open_npz)
         ll.addWidget(QLabel("Fill policy"), 0, 0)
         ll.addWidget(self.cmb_policy, 0, 1)
         ll.addWidget(self.btn_log, 1, 0)
@@ -332,6 +379,8 @@ class MainWindow(QMainWindow):
         ll.addWidget(self.bar_log, 2, 0, 1, 2)
         ll.addWidget(self.btn_dump, 3, 0, 1, 2)
         ll.addWidget(self.bar_dump, 4, 0, 1, 2)
+        ll.addWidget(self.btn_plot, 5, 0)
+        ll.addWidget(btn_open, 5, 1)
         left.addWidget(log_box)
 
         left.addStretch(1)
@@ -599,6 +648,41 @@ class MainWindow(QMainWindow):
             session_id=hdr.session_id)
 
         self.log(f"Saved {n} samples -> {csv_path.name} + {npz_path.name}")
+
+        title = (f"session {hdr.session_id} · {odr} Hz · {n} samples · "
+                 f"±{P.ACCEL_FS_G[hdr.accel_fs]} g / "
+                 f"±{P.GYRO_FS_DPS[hdr.gyro_fs]} dps · {csv_path.name}")
+        self._dump_data = (t, acc, gyr, title)
+        self.btn_plot.setEnabled(True)
+        self._plot_dump()
+
+    def _plot_dump(self):
+        if self._dump_data is None:
+            return
+        if self._dump_win is None:
+            self._dump_win = DumpPlotWindow()
+        self._dump_win.set_data(*self._dump_data)
+        self._dump_win.show()
+        self._dump_win.raise_()
+
+    def _open_npz(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Open IMU log", "", "NumPy (*.npz)")
+        if not path:
+            return
+        try:
+            d = np.load(path)
+            t, acc, gyr = d["t_s"], d["accel_g"], d["gyro_dps"]
+            odr = float(d["odr_hz"]) if "odr_hz" in d else 0
+            sess = int(d["session_id"]) if "session_id" in d else 0
+        except Exception as e:
+            self.log(f"Could not open {Path(path).name}: {e}")
+            return
+        title = (f"session {sess} · {odr} Hz · {len(t)} samples · "
+                 f"{Path(path).name}")
+        self._dump_data = (t, acc, gyr, title)
+        self.btn_plot.setEnabled(True)
+        self._plot_dump()
 
 
 def main():
