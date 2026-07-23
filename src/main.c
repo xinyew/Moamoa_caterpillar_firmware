@@ -17,6 +17,7 @@
 #include "drivers/driver_led.h"
 #include "drivers/driver_vdc_sense.h"
 #include "interface/ble_interface.h"
+#include "flpr_launch.h"
 
 LOG_MODULE_REGISTER(caterpillar_main, LOG_LEVEL_DBG);
 
@@ -51,6 +52,9 @@ int main(void)
     if (drv_led_init() < 0) {
         LOG_ERR("Failed to init status LED");
     }
+
+    /* Start the IMU coprocessor from the firmware embedded in this image */
+    flpr_launch();
 
     /* VDC sense ADC (AIN4 / P1.11) */
     if (drv_vdc_sense_init() < 0) {
