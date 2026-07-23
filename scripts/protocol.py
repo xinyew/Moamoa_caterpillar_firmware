@@ -30,6 +30,7 @@ UUID_LOG_CTL = _u16(0xFFEA)   # write cmd / read 20 B state
 UUID_DUMP = _u16(0xFFEB)      # write 8 B request / notify chunks
 UUID_MSG = _u16(0xFFEC)       # notify: text lines
 UUID_LED = _u16(0xFFED)       # write u8 / read u8: heartbeat LED enable
+UUID_TIME = _u16(0xFFEE)      # write u32 LE unix epoch / read device epoch
 
 FREQ_MIN_HZ, FREQ_MAX_HZ = 4, 1000
 VOLT_MIN_MV, VOLT_MAX_MV = 750, 4200
@@ -85,6 +86,10 @@ def encode_log_cmd(cmd: int, policy: int = LOG_POLICY_STOP) -> bytes:
 
 def encode_dump_req(offset: int, length: int) -> bytes:
     return struct.pack("<II", offset, length)
+
+
+def encode_time(epoch: int) -> bytes:
+    return struct.pack("<I", epoch)
 
 
 @dataclass

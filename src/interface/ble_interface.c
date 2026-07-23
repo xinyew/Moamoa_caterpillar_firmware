@@ -20,6 +20,8 @@
  *            notify: chunks {offset u32, n u16, last u8, rsvd} + data
  *   0xFFEC — notify: device warning/error text lines (replaces RTT)
  *   0xFFED — write: status-LED heartbeat enable (u8) / read: current state
+ *   0xFFEE — write: wall-clock sync (u32 LE unix epoch, UTC) /
+ *            read: device's current epoch estimate (0 = never synced)
  * Writes accept acknowledged Write Requests as well as
  * Write-Without-Response.
  */
@@ -77,6 +79,7 @@ LOG_MODULE_REGISTER(ble_if, LOG_LEVEL_INF);
 #define BT_UUID_CATERPILLAR_DUMP_VAL    0xFFEB
 #define BT_UUID_CATERPILLAR_MSG_VAL     0xFFEC
 #define BT_UUID_CATERPILLAR_LED_VAL     0xFFED
+#define BT_UUID_CATERPILLAR_TIME_VAL    0xFFEE
 
 #define BT_UUID_CATERPILLAR_SVC  BT_UUID_DECLARE_16(BT_UUID_CATERPILLAR_SVC_VAL)
 #define BT_UUID_CATERPILLAR_FREQ BT_UUID_DECLARE_16(BT_UUID_CATERPILLAR_FREQ_VAL)
@@ -97,6 +100,7 @@ LOG_MODULE_REGISTER(ble_if, LOG_LEVEL_INF);
 #define BT_UUID_CATERPILLAR_DUMP BT_UUID_DECLARE_16(BT_UUID_CATERPILLAR_DUMP_VAL)
 #define BT_UUID_CATERPILLAR_MSG  BT_UUID_DECLARE_16(BT_UUID_CATERPILLAR_MSG_VAL)
 #define BT_UUID_CATERPILLAR_LED  BT_UUID_DECLARE_16(BT_UUID_CATERPILLAR_LED_VAL)
+#define BT_UUID_CATERPILLAR_TIME BT_UUID_DECLARE_16(BT_UUID_CATERPILLAR_TIME_VAL)
 
 /* -------------------------------------------------------------------------- */
 /*  Advertising data                                                          */
@@ -350,6 +354,53 @@ static ssize_t on_tput_read(struct bt_conn *conn,
     uint8_t le[4];
 
     sys_put_le32(tput_rx_bytes, le);
+    return bt_gatt_attr_read(conn, attr, buf, len, offset, le, sizeof(le));
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Wall-clock sync (0xFFEE) — the GUI writes unix time on every connect      */
+/*  so on-chip log sessions carry real-world start timestamps.                */
+/* -------------------------------------------------------------------------- */
+
+/* epoch seconds at device boot (uptime 0); 0 = never synced */
+static uint32_t wall_epoch_at_boot;
+
+uint32_t ble_wall_now(void)
+{
+    if (wall_epoch_at_boot == 0) {
+        return 0;
+    }
+    return wall_epoch_at_boot + (uint32_t)(k_uptime_get() / 1000);
+}
+
+static ssize_t on_time_write(struct bt_conn *conn,
+                             const struct bt_gatt_attr *attr,
+                             const void *buf, uint16_t len,
+                             uint16_t offset, uint8_t flags)
+{
+    ARG_UNUSED(conn); ARG_UNUSED(attr); ARG_UNUSED(flags);
+
+    if (len != 4 || offset != 0) {
+        return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
+    }
+
+    uint32_t epoch = sys_get_le32(buf);
+    if (epoch == 0) {
+        return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
+    }
+
+    wall_epoch_at_boot = epoch - (uint32_t)(k_uptime_get() / 1000);
+    LOG_INF("BLE: wall clock synced (epoch %u)", epoch);
+    return len;
+}
+
+static ssize_t on_time_read(struct bt_conn *conn,
+                            const struct bt_gatt_attr *attr,
+                            void *buf, uint16_t len, uint16_t offset)
+{
+    uint8_t le[4];
+
+    sys_put_le32(ble_wall_now(), le);
     return bt_gatt_attr_read(conn, attr, buf, len, offset, le, sizeof(le));
 }
 
@@ -775,6 +826,10 @@ BT_GATT_SERVICE_DEFINE(caterpillar_svc,
         BT_GATT_CHRC_READ | BT_GATT_CHRC_WRITE | BT_GATT_CHRC_WRITE_WITHOUT_RESP,
         BT_GATT_PERM_READ | BT_GATT_PERM_WRITE,
         on_led_read, on_led_write, NULL),
+    BT_GATT_CHARACTERISTIC(BT_UUID_CATERPILLAR_TIME,
+        BT_GATT_CHRC_READ | BT_GATT_CHRC_WRITE | BT_GATT_CHRC_WRITE_WITHOUT_RESP,
+        BT_GATT_PERM_READ | BT_GATT_PERM_WRITE,
+        on_time_read, on_time_write, NULL),
 );
 
 /* -------------------------------------------------------------------------- */

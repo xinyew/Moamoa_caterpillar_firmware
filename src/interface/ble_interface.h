@@ -23,4 +23,12 @@ int ble_interface_init(void);
  */
 void ble_msg(const char *fmt, ...);
 
+/**
+ * @brief Current wall-clock time as unix epoch seconds (UTC).
+ *
+ * Derived from the last 0xFFEE sync; returns 0 if no client has
+ * synced the clock since boot.
+ */
+uint32_t ble_wall_now(void);
+
 #endif /* BLE_INTERFACE_H */

@@ -109,6 +109,14 @@ class BleWorker:
 
         await self.client.start_notify(P.UUID_MSG, self._on_msg)
         await self.client.start_notify(P.UUID_DUMP, self._on_dump_chunk)
+
+        # Sync the device's wall clock so log sessions carry real
+        # start timestamps (UTC epoch; rendered local on display).
+        now = int(time.time())
+        await self.client.write_gatt_char(P.UUID_TIME, P.encode_time(now),
+                                          response=True)
+        self.ui.log(f"Device clock synced: "
+                    f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(now))}")
         return True
 
     async def disconnect(self):
