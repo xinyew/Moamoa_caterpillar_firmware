@@ -27,6 +27,15 @@ OTA update over BLE (after MCUboot is on the board; needs `pip install smpclient
 $ python scripts/ble_control.py --dfu build/Moamoa_caterpillar_firmware/zephyr/zephyr.signed.bin
 Images are auto-signed with the SDK dev key (intentionally open DFU — the
 "not secure" build warning is expected). Bump VERSION before OTA releases.
+Control GUI (motor + IMU config + live plots + log dump; standalone,
+shares only gui/protocol.py with the firmware):
+$ pip install -r gui/requirements.txt
+$ python gui/caterpillar_gui.py
+IMU data path (v1.2.0+): FLPR samples at configured ODR (12.5 Hz-6.66 kHz)
+into a shared-SRAM ring; app pump logs full rate to 798 KB RRAM
+(dual-use with OTA secondary slot - a DFU upload overwrites the log)
+and streams decimated (~20 KiB/s) over 0xFFE9. Warnings/errors go to
+0xFFEC (GUI console). Boot is idle: rail off, driver asleep, duty 0.
 Load RTT console and connect to the board (makesure to set a timeout of 5 seconds, if there's nothing or returned meaning no output):
 $ & "~\Downloads\SimplicityCommander-Windows\SimplicityCommander-Windows\Commander-cli_win32_x64_1v24p1b1980\Simplicity Commander CLI\commander-cli.exe"  rtt connect --device nrf54l15_M33
 

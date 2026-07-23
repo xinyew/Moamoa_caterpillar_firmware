@@ -1,0 +1,5 @@
+bleak>=0.22
+PySide6>=6.6
+pyqtgraph>=0.13
+qasync>=0.27
+numpy>=1.24
