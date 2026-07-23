@@ -1,0 +1,27 @@
+{
+    // IntelliSense is driven entirely by the compile databases the
+    // build emits, so it is exact (real compiler, defines, generated
+    // headers) and machine-portable: on a new computer, run one full
+    // build (see CLAUDE.md) and reload the window.
+    //
+    // The array is searched in order per file: app-core sources resolve
+    // via build/, FLPR sources via build-flpr/.
+    "configurations": [
+        {
+            "name": "NCS (app + FLPR)",
+            "compileCommands": [
+                "${workspaceFolder}/build/Moamoa_caterpillar_firmware/compile_commands.json",
+                "${workspaceFolder}/build-flpr/compile_commands.json"
+            ],
+            "browse": {
+                "path": [
+                    "${workspaceFolder}/src",
+                    "${workspaceFolder}/flpr/src",
+                    "${workspaceFolder}/common"
+                ],
+                "limitSymbolsToIncludedHeaders": true
+            }
+        }
+    ],
+    "version": 4
+}

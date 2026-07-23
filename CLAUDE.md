@@ -39,6 +39,13 @@ and streams decimated (~20 KiB/s) over 0xFFE9. Warnings/errors go to
 Load RTT console and connect to the board (makesure to set a timeout of 5 seconds, if there's nothing or returned meaning no output):
 $ & "~\Downloads\SimplicityCommander-Windows\SimplicityCommander-Windows\Commander-cli_win32_x64_1v24p1b1980\Simplicity Commander CLI\commander-cli.exe"  rtt connect --device nrf54l15_M33
 
+## VS Code IntelliSense
+.vscode/ (committed) wires the C/C++ extension to the build's
+compile_commands.json (app: build/Moamoa_caterpillar_firmware/, FLPR:
+build-flpr/). On a fresh machine: install the C/C++ + CMake extensions,
+run one full build, then Reload Window - no per-machine config needed
+(the databases are regenerated locally with correct NCS paths).
+
 ## Pin Map
 
 | Pin   | Function         | Notes                               |

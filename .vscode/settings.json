@@ -1,0 +1,30 @@
+{
+    // Builds are driven by west (see CLAUDE.md), not by the CMake
+    // extension — keep it from trying to configure with a desktop kit.
+    "cmake.configureOnOpen": false,
+    "cmake.automaticReconfigure": false,
+
+    // C/C++ extension: the compile databases are the single source of
+    // truth; don't guess a fallback squiggle config from random headers.
+    "C_Cpp.default.compileCommands": "${workspaceFolder}/build/Moamoa_caterpillar_firmware/compile_commands.json",
+    "C_Cpp.errorSquiggles": "enabled",
+
+    "files.associations": {
+        "*.dts": "dts",
+        "*.dtsi": "dts",
+        "*.overlay": "dts",
+        "Kconfig*": "kconfig",
+        "*.conf": "properties",
+        "*.inc": "c"
+    },
+
+    // Keep search/watch out of the (large, regenerable) build trees
+    "search.exclude": {
+        "build/**": true,
+        "build-flpr/**": true
+    },
+    "files.watcherExclude": {
+        "build/**": true,
+        "build-flpr/**": true
+    }
+}
