@@ -46,14 +46,16 @@
 	ranges = <0x0 0x20000000 0x28000>;
 };
 
+/* NOTE: MCUboot builds from this same devicetree and would get its own
+ * VPR launcher, which starts the FLPR early and then lets the app's
+ * launcher re-copy over the RUNNING coprocessor (fatal).  MCUboot's
+ * launcher is disabled in sysbuild/mcuboot.conf — the app is the sole
+ * launcher.
+ */
 &cpuflpr_vpr {
 	status = "okay";
 	execution-memory = <&cpuflpr_sram_code_data>;
 	source-memory = <&cpuflpr_code_partition>;
-	/* VPR bus-master (fetch/DMA) transactions must be secure to
-	 * access secure-by-default memory when the app runs secure
-	 */
-	enable-dma-secure;
 };
 
 &lfxo {
