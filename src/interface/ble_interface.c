@@ -19,6 +19,7 @@
  *   0xFFEB — write: dump request {offset u32, len u32} →
  *            notify: chunks {offset u32, n u16, last u8, rsvd} + data
  *   0xFFEC — notify: device warning/error text lines (replaces RTT)
+ *   0xFFED — write: status-LED heartbeat enable (u8) / read: current state
  * Writes accept acknowledged Write Requests as well as
  * Write-Without-Response.
  */
@@ -30,6 +31,7 @@
 #include "../drivers/driver_vdc_sense.h"
 #include "../drivers/driver_stbb1_apur.h"
 #include "../drivers/driver_drv8212.h"
+#include "../drivers/driver_led.h"
 #include "../imu_pump.h"
 #include "../imu_log.h"
 #include "common/imu_shared.h"
@@ -74,6 +76,7 @@ LOG_MODULE_REGISTER(ble_if, LOG_LEVEL_INF);
 #define BT_UUID_CATERPILLAR_LOGCTL_VAL  0xFFEA
 #define BT_UUID_CATERPILLAR_DUMP_VAL    0xFFEB
 #define BT_UUID_CATERPILLAR_MSG_VAL     0xFFEC
+#define BT_UUID_CATERPILLAR_LED_VAL     0xFFED
 
 #define BT_UUID_CATERPILLAR_SVC  BT_UUID_DECLARE_16(BT_UUID_CATERPILLAR_SVC_VAL)
 #define BT_UUID_CATERPILLAR_FREQ BT_UUID_DECLARE_16(BT_UUID_CATERPILLAR_FREQ_VAL)
@@ -93,6 +96,7 @@ LOG_MODULE_REGISTER(ble_if, LOG_LEVEL_INF);
     BT_UUID_DECLARE_16(BT_UUID_CATERPILLAR_LOGCTL_VAL)
 #define BT_UUID_CATERPILLAR_DUMP BT_UUID_DECLARE_16(BT_UUID_CATERPILLAR_DUMP_VAL)
 #define BT_UUID_CATERPILLAR_MSG  BT_UUID_DECLARE_16(BT_UUID_CATERPILLAR_MSG_VAL)
+#define BT_UUID_CATERPILLAR_LED  BT_UUID_DECLARE_16(BT_UUID_CATERPILLAR_LED_VAL)
 
 /* -------------------------------------------------------------------------- */
 /*  Advertising data                                                          */
@@ -263,7 +267,7 @@ static ssize_t on_drv_write(struct bt_conn *conn,
 /*    6  u8   duty IN1 [%]   7 u8 duty IN2 [%]                                */
 /*    8  u16  target VDC [mV] (0 = never set)                                 */
 /*   10  u16  measured VDC [mV]                                               */
-/*   12  u8   rail on   13 u8 driver awake   14 u8 IMU ok   15 u8 rsvd        */
+/*   12  u8   rail on   13 u8 driver awake   14 u8 IMU ok   15 u8 LED on      */
 /*   16  u32  uptime [s]                                                      */
 /*   20  u32  boot reset cause (zephyr hwinfo bits)                           */
 /*   24  u32  FLPR fw version 0x00MMmmpp (0 = FLPR not running/too old)       */
@@ -298,7 +302,7 @@ static ssize_t on_status_read(struct bt_conn *conn,
     s[13] = drv_drv8212_awake() ? 1 : 0;
     s[14] = (IMU_SHARED->magic == IMU_SHARED_MAGIC && IMU_SHARED->imu_ok)
                 ? 1 : 0;
-    s[15] = 0;
+    s[15] = drv_led_enabled() ? 1 : 0;
     sys_put_le32((uint32_t)(k_uptime_get() / 1000), &s[16]);
     sys_put_le32(app_reset_cause, &s[20]);
     sys_put_le32((IMU_SHARED->magic == IMU_SHARED_MAGIC)
@@ -347,6 +351,39 @@ static ssize_t on_tput_read(struct bt_conn *conn,
 
     sys_put_le32(tput_rx_bytes, le);
     return bt_gatt_attr_read(conn, attr, buf, len, offset, le, sizeof(le));
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Status-LED heartbeat enable (0xFFED)                                      */
+/* -------------------------------------------------------------------------- */
+
+static ssize_t on_led_write(struct bt_conn *conn,
+                            const struct bt_gatt_attr *attr,
+                            const void *buf, uint16_t len,
+                            uint16_t offset, uint8_t flags)
+{
+    ARG_UNUSED(conn); ARG_UNUSED(attr); ARG_UNUSED(flags);
+
+    if (len != 1 || offset != 0) {
+        return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
+    }
+
+    uint8_t on = *(const uint8_t *)buf;
+    if (on > 1) {
+        return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
+    }
+
+    drv_led_set_enabled(on != 0);
+    return len;
+}
+
+static ssize_t on_led_read(struct bt_conn *conn,
+                           const struct bt_gatt_attr *attr,
+                           void *buf, uint16_t len, uint16_t offset)
+{
+    uint8_t v = drv_led_enabled() ? 1 : 0;
+
+    return bt_gatt_attr_read(conn, attr, buf, len, offset, &v, sizeof(v));
 }
 
 /* -------------------------------------------------------------------------- */
@@ -734,6 +771,10 @@ BT_GATT_SERVICE_DEFINE(caterpillar_svc,
         BT_GATT_PERM_NONE,
         NULL, NULL, NULL),
     BT_GATT_CCC(NULL, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
+    BT_GATT_CHARACTERISTIC(BT_UUID_CATERPILLAR_LED,
+        BT_GATT_CHRC_READ | BT_GATT_CHRC_WRITE | BT_GATT_CHRC_WRITE_WITHOUT_RESP,
+        BT_GATT_PERM_READ | BT_GATT_PERM_WRITE,
+        on_led_read, on_led_write, NULL),
 );
 
 /* -------------------------------------------------------------------------- */

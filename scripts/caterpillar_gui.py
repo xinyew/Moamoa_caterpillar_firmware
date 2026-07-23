@@ -151,6 +151,39 @@ class BleWorker:
         data = await self.client.read_gatt_char(P.UUID_STATUS)
         return P.decode_status(bytes(data))
 
+    async def set_led(self, on: bool):
+        await self.client.write_gatt_char(P.UUID_LED, P.encode_onoff(on),
+                                          response=True)
+        self.ui.log(f"Heartbeat LED -> {'ON' if on else 'OFF'}")
+
+    async def tput_test(self, kib: int = 64) -> float:
+        """Send a bounded burst into the 0xFFE7 sink and measure what
+        the device actually received — an end-to-end link-quality
+        number (healthy on Windows: ~18-26 KiB/s)."""
+        payload = bytes(max(20, self.client.mtu_size - 3))
+        total = kib * 1024
+
+        d = await self.client.read_gatt_char(P.UUID_TPUT)
+        c0 = struct.unpack("<I", bytes(d))[0]
+        t0 = time.monotonic()
+        sent = 0
+        writes = 0
+        while sent < total:
+            await self.client.write_gatt_char(P.UUID_TPUT, payload,
+                                              response=False)
+            sent += len(payload)
+            if (writes := writes + 1) % 16 == 0:
+                await asyncio.sleep(0)    # keep the Qt loop breathing
+        d = await self.client.read_gatt_char(P.UUID_TPUT)
+        el = time.monotonic() - t0
+        rx = (struct.unpack("<I", bytes(d))[0] - c0) & 0xFFFFFFFF
+
+        rate = rx / el / 1024
+        loss = f", {sent - rx} B lost" if rx != sent else ", no loss"
+        self.ui.log(f"Throughput: {rate:.1f} KiB/s device-confirmed "
+                    f"({rx}/{sent} B in {el:.1f} s{loss})")
+        return rate
+
     # ---- IMU ------------------------------------------------------------
 
     async def set_imu_cfg(self, odr: int, content: int, afs: int, gfs: int):
@@ -267,10 +300,19 @@ class MainWindow(QMainWindow):
             lambda: asyncio.ensure_future(self._do_connect()))
         self.lbl_conn = QLabel("disconnected")
         self.lbl_fw = QLabel("—")
+        self.chk_led = QCheckBox("Heartbeat LED")
+        self.chk_led.setChecked(True)
+        self.chk_led.clicked.connect(lambda on: asyncio.ensure_future(
+            self.ble.set_led(on)))
+        self.btn_tput = QPushButton("Throughput test")
+        self.btn_tput.clicked.connect(
+            lambda: asyncio.ensure_future(self._run_tput()))
         cl.addWidget(self.btn_connect, 0, 0)
         cl.addWidget(self.lbl_conn, 0, 1)
         cl.addWidget(QLabel("Firmware:"), 1, 0)
         cl.addWidget(self.lbl_fw, 1, 1)
+        cl.addWidget(self.chk_led, 2, 0)
+        cl.addWidget(self.btn_tput, 2, 1)
         left.addWidget(conn_box)
 
         motor_box = QGroupBox("Motor")
@@ -466,12 +508,31 @@ class MainWindow(QMainWindow):
             f"duty {st.duty1}%")
         self.chk_rail.setChecked(st.rail_on)
         self.chk_drv.setChecked(st.drv_awake)
+        self.chk_led.setChecked(st.led_on)
         self.bar_log.setMaximum(max(st.log_capacity, 1))
         self.bar_log.setValue(min(st.log_bytes, st.log_capacity))
         if st.log_active != self.btn_log.isChecked():
             self.btn_log.setChecked(st.log_active)
             self.btn_log.setText("Stop logging" if st.log_active
                                  else "Start logging")
+
+    async def _run_tput(self):
+        if not self.ble.connected:
+            return
+        if self.btn_stream.isChecked():
+            self.log("Stop the live stream first — it would skew the "
+                     "throughput measurement.")
+            return
+        self.btn_tput.setEnabled(False)
+        self.log("Throughput test running (64 KiB burst)...")
+        try:
+            await self.ble.tput_test()
+        except Exception as e:
+            self.log(f"Throughput test aborted — link dropped mid-burst "
+                     f"({type(e).__name__}). That itself indicates a weak "
+                     f"connection; reconnect and retry.")
+        finally:
+            self.btn_tput.setEnabled(True)
 
     async def _apply_imu_cfg(self):
         if not self.ble.connected:

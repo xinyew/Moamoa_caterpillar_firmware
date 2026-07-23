@@ -23,11 +23,13 @@ UUID_VDC_MEAS = _u16(0xFFE3)  # read u16 LE: measured VDC mV
 UUID_RAIL = _u16(0xFFE4)      # write u8: rail enable
 UUID_DRV = _u16(0xFFE5)       # write u8: driver awake
 UUID_STATUS = _u16(0xFFE6)    # read: 44 B status packet v3
+UUID_TPUT = _u16(0xFFE7)      # write: byte sink / read u32 LE counter
 UUID_IMU_CFG = _u16(0xFFE8)   # write 4 B / read 12 B
 UUID_STREAM = _u16(0xFFE9)    # notify: 8 B header + N x 16 B samples
 UUID_LOG_CTL = _u16(0xFFEA)   # write cmd / read 20 B state
 UUID_DUMP = _u16(0xFFEB)      # write 8 B request / notify chunks
 UUID_MSG = _u16(0xFFEC)       # notify: text lines
+UUID_LED = _u16(0xFFED)       # write u8 / read u8: heartbeat LED enable
 
 FREQ_MIN_HZ, FREQ_MAX_HZ = 4, 1000
 VOLT_MIN_MV, VOLT_MAX_MV = 750, 4200
@@ -97,6 +99,7 @@ class Status:
     rail_on: bool
     drv_awake: bool
     imu_ok: bool
+    led_on: bool
     uptime_s: int
     reset_cause: int
     odr_code: int
@@ -112,15 +115,15 @@ def decode_status(data: bytes) -> Status:
     if len(data) < 44 or data[0] != 3:
         raise ValueError(f"unsupported status packet v{data[0]}, "
                          f"{len(data)} B (firmware too old?)")
-    (_, maj, mi, pa, freq, d1, d2, tgt, meas, rail, drv, imu, _r,
+    (_, maj, mi, pa, freq, d1, d2, tgt, meas, rail, drv, imu, led,
      uptime, cause, flpr) = struct.unpack_from("<4BH2B2H4B3I", data, 0)
     odr, content, log_on, log_pol, log_bytes, log_cap, overruns = \
         struct.unpack_from("<4B3I", data, 28)
     flpr_fw = ((flpr >> 16) & 0xFF, (flpr >> 8) & 0xFF, flpr & 0xFF) \
         if flpr else None
     return Status((maj, mi, pa), flpr_fw, freq, d1, d2, tgt, meas,
-                  bool(rail), bool(drv), bool(imu), uptime, cause,
-                  odr, content, bool(log_on), log_pol, log_bytes,
+                  bool(rail), bool(drv), bool(imu), bool(led), uptime,
+                  cause, odr, content, bool(log_on), log_pol, log_bytes,
                   log_cap, overruns)
 
 

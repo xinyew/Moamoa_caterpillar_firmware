@@ -28,7 +28,7 @@ LOG_MODULE_REGISTER(drv_led, LOG_LEVEL_INF);
 #define PERIOD_MS      1000
 
 /* How many 1 s reset-marker periods to play after boot */
-#define BOOT_PATTERN_REPEATS  5
+#define BOOT_PATTERN_REPEATS  3
 
 struct blink_step {
     uint8_t  on;
@@ -53,6 +53,7 @@ static const struct blink_step *pattern = boot_pattern;
 static size_t pattern_len = ARRAY_SIZE(boot_pattern);
 static size_t step_idx;
 static uint8_t boot_periods_left;
+static bool led_enabled = true;
 
 static void blink_timer_fn(struct k_timer *timer)
 {
@@ -105,6 +106,34 @@ void drv_led_set(bool on)
 {
     k_timer_stop(&blink_timer);
     gpio_pin_set_raw(LED_PORT, LED_PIN, on ? 1 : 0);
+}
+
+void drv_led_set_enabled(bool enable)
+{
+    if (enable == led_enabled) {
+        return;
+    }
+    led_enabled = enable;
+
+    if (enable) {
+        /* Resume the running heartbeat (no reset marker) */
+        pattern = run_pattern;
+        pattern_len = ARRAY_SIZE(run_pattern);
+        boot_periods_left = 0;
+        step_idx = 0;
+        gpio_pin_set_raw(LED_PORT, LED_PIN, pattern[0].on);
+        k_timer_start(&blink_timer, K_MSEC(pattern[0].ms), K_NO_WAIT);
+        LOG_INF("LED heartbeat ON");
+    } else {
+        k_timer_stop(&blink_timer);
+        gpio_pin_set_raw(LED_PORT, LED_PIN, 0);
+        LOG_INF("LED heartbeat OFF");
+    }
+}
+
+bool drv_led_enabled(void)
+{
+    return led_enabled;
 }
 
 void drv_led_toggle(void)
