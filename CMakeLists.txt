@@ -6,17 +6,43 @@ list(APPEND BOARD_ROOT ${CMAKE_CURRENT_SOURCE_DIR})
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(caterpillar)
 # Embed the FLPR (RISC-V coprocessor) firmware into this image so app
-# OTA updates carry it (version-atomic).  Build it first:
-#   west build -b caterpillar/nrf54l15/cpuflpr --build-dir build-flpr flpr --no-sysbuild
-set(FLPR_BIN ${CMAKE_CURRENT_SOURCE_DIR}/build-flpr/zephyr/zephyr.bin)
-if(NOT EXISTS ${FLPR_BIN})
-    message(FATAL_ERROR
-        "FLPR image not found: ${FLPR_BIN}\n"
-        "Build it first:\n"
-        "  west build -b caterpillar/nrf54l15/cpuflpr --build-dir build-flpr flpr --no-sysbuild")
+# OTA updates carry it (version-atomic).  The FLPR is configured here on
+# first use and incrementally rebuilt on every app build, so a plain
+# `west build` of the app picks up FLPR source changes automatically.
+set(FLPR_BUILD_DIR ${CMAKE_CURRENT_SOURCE_DIR}/build-flpr)
+set(FLPR_BIN ${FLPR_BUILD_DIR}/zephyr/zephyr.bin)
+
+if(NOT EXISTS ${FLPR_BUILD_DIR}/build.ninja)
+    message(STATUS "FLPR: first-time configure+build of ${FLPR_BUILD_DIR}")
+    execute_process(
+        COMMAND ${PYTHON_EXECUTABLE} -m west build
+                -b caterpillar/nrf54l15/cpuflpr
+                --build-dir ${FLPR_BUILD_DIR}
+                ${CMAKE_CURRENT_SOURCE_DIR}/flpr --no-sysbuild
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        RESULT_VARIABLE flpr_rc
+    )
+    if(NOT flpr_rc EQUAL 0 OR NOT EXISTS ${FLPR_BIN})
+        message(FATAL_ERROR "FLPR build failed (see output above)")
+    endif()
 endif()
+
+# The staged copy's mtime only changes when the FLPR binary content
+# changed, so an unchanged FLPR does not re-embed or re-link the app.
+set(FLPR_STAGED ${CMAKE_BINARY_DIR}/flpr_staged.bin)
+execute_process(COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        ${FLPR_BIN} ${FLPR_STAGED})
+add_custom_target(flpr_build
+    COMMAND ${CMAKE_COMMAND} --build ${FLPR_BUILD_DIR}
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${FLPR_BIN} ${FLPR_STAGED}
+    BYPRODUCTS ${FLPR_STAGED}
+    USES_TERMINAL
+    COMMENT "FLPR: incremental rebuild"
+)
+
 set(FLPR_GEN_DIR ${ZEPHYR_BINARY_DIR}/misc/generated/flpr)
-generate_inc_file_for_target(app ${FLPR_BIN} ${FLPR_GEN_DIR}/flpr_image.inc)
+generate_inc_file_for_target(app ${FLPR_STAGED} ${FLPR_GEN_DIR}/flpr_image.inc)
+add_dependencies(app flpr_build)
 target_include_directories(app PRIVATE ${FLPR_GEN_DIR})
 
 target_sources(app PRIVATE
