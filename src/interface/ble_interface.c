@@ -16,12 +16,16 @@
  *            decimated to fit the link; flash always gets full rate)
  *   0xFFEA — write: log control {cmd, policy}  (0=stop 1=start 2=erase)
  *            read: log state (20 B)
- *   0xFFEB — write: dump request {offset u32, len u32} →
+ *   0xFFEB — write: dump request {session u32, offset u32, len u32} →
  *            notify: chunks {offset u32, n u16, last u8, rsvd} + data
  *   0xFFEC — notify: device warning/error text lines (replaces RTT)
  *   0xFFED — write: status-LED heartbeat enable (u8) / read: current state
  *   0xFFEE — write: wall-clock sync (u32 LE unix epoch, UTC) /
  *            read: device's current epoch estimate (0 = never synced)
+ *   0xFFEF — read: session directory, newest first:
+ *            {count u8, rsvd[3]} + count × 16 B
+ *            {seq u32, wall_start u32, rec_count u32, odr u8,
+ *             content u8, accel_fs u8, gyro_fs u8}
  * Writes accept acknowledged Write Requests as well as
  * Write-Without-Response.
  */
@@ -80,6 +84,7 @@ LOG_MODULE_REGISTER(ble_if, LOG_LEVEL_INF);
 #define BT_UUID_CATERPILLAR_MSG_VAL     0xFFEC
 #define BT_UUID_CATERPILLAR_LED_VAL     0xFFED
 #define BT_UUID_CATERPILLAR_TIME_VAL    0xFFEE
+#define BT_UUID_CATERPILLAR_DIR_VAL     0xFFEF
 
 #define BT_UUID_CATERPILLAR_SVC  BT_UUID_DECLARE_16(BT_UUID_CATERPILLAR_SVC_VAL)
 #define BT_UUID_CATERPILLAR_FREQ BT_UUID_DECLARE_16(BT_UUID_CATERPILLAR_FREQ_VAL)
@@ -101,6 +106,7 @@ LOG_MODULE_REGISTER(ble_if, LOG_LEVEL_INF);
 #define BT_UUID_CATERPILLAR_MSG  BT_UUID_DECLARE_16(BT_UUID_CATERPILLAR_MSG_VAL)
 #define BT_UUID_CATERPILLAR_LED  BT_UUID_DECLARE_16(BT_UUID_CATERPILLAR_LED_VAL)
 #define BT_UUID_CATERPILLAR_TIME BT_UUID_DECLARE_16(BT_UUID_CATERPILLAR_TIME_VAL)
+#define BT_UUID_CATERPILLAR_DIR  BT_UUID_DECLARE_16(BT_UUID_CATERPILLAR_DIR_VAL)
 
 /* -------------------------------------------------------------------------- */
 /*  Advertising data                                                          */
@@ -661,14 +667,44 @@ static ssize_t on_logctl_read(struct bt_conn *conn,
 }
 
 /* -------------------------------------------------------------------------- */
-/*  Log dump (0xFFEB): request {offset u32, len u32} -> notify chunks         */
-/*  Chunk: 0 u32 offset   4 u16 n   6 u8 last   7 u8 rsvd   8.. data          */
+/*  Session directory (0xFFEF, read)                                          */
+/* -------------------------------------------------------------------------- */
+
+static ssize_t on_dir_read(struct bt_conn *conn,
+                           const struct bt_gatt_attr *attr,
+                           void *buf, uint16_t len, uint16_t offset)
+{
+    struct imu_log_session list[IMU_LOG_MAX_SESSIONS];
+    uint8_t pkt[4 + IMU_LOG_MAX_SESSIONS * 16];
+    int n = imu_log_session_list(list, IMU_LOG_MAX_SESSIONS);
+
+    pkt[0] = (uint8_t)n;
+    pkt[1] = pkt[2] = pkt[3] = 0;
+    for (int i = 0; i < n; i++) {
+        uint8_t *e = &pkt[4 + i * 16];
+
+        sys_put_le32(list[i].seq, &e[0]);
+        sys_put_le32(list[i].wall_start, &e[4]);
+        sys_put_le32(list[i].rec_count, &e[8]);
+        e[12] = list[i].odr_code;
+        e[13] = list[i].content;
+        e[14] = list[i].accel_fs;
+        e[15] = list[i].gyro_fs;
+    }
+
+    return bt_gatt_attr_read(conn, attr, buf, len, offset, pkt,
+                             4 + n * 16);
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Log dump (0xFFEB): request {session u32, offset u32, len u32} ->          */
+/*  notify chunks: 0 u32 offset   4 u16 n   6 u8 last   7 u8 rsvd   8.. data  */
 /* -------------------------------------------------------------------------- */
 
 #define DUMP_CHUNK_DATA  232
 
 static K_SEM_DEFINE(dump_sem, 0, 1);
-static uint32_t dump_req_off, dump_req_len;
+static uint32_t dump_req_session, dump_req_off, dump_req_len;
 static volatile bool dump_abort;
 
 static ssize_t on_dump_write(struct bt_conn *conn,
@@ -678,14 +714,15 @@ static ssize_t on_dump_write(struct bt_conn *conn,
 {
     ARG_UNUSED(conn); ARG_UNUSED(attr); ARG_UNUSED(flags);
 
-    if (len != 8 || offset != 0) {
+    if (len != 12 || offset != 0) {
         return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
     }
 
     const uint8_t *p = buf;
     dump_abort = true;               /* cancel any dump in flight */
-    dump_req_off = sys_get_le32(&p[0]);
-    dump_req_len = sys_get_le32(&p[4]);
+    dump_req_session = sys_get_le32(&p[0]);
+    dump_req_off = sys_get_le32(&p[4]);
+    dump_req_len = sys_get_le32(&p[8]);
     k_sem_give(&dump_sem);
     return len;
 }
@@ -700,12 +737,13 @@ static void dump_thread(void *a, void *b, void *c)
         k_sem_take(&dump_sem, K_FOREVER);
         dump_abort = false;
 
+        uint32_t session = dump_req_session;
         uint32_t off = dump_req_off;
         uint32_t remaining = dump_req_len;
 
         while (remaining > 0 && !dump_abort) {
             uint32_t want = MIN(remaining, (uint32_t)DUMP_CHUNK_DATA);
-            int n = imu_log_read(off, &chunk[8], want);
+            int n = imu_log_read_session(session, off, &chunk[8], want);
 
             if (n < 0) {
                 break;
@@ -830,6 +868,10 @@ BT_GATT_SERVICE_DEFINE(caterpillar_svc,
         BT_GATT_CHRC_READ | BT_GATT_CHRC_WRITE | BT_GATT_CHRC_WRITE_WITHOUT_RESP,
         BT_GATT_PERM_READ | BT_GATT_PERM_WRITE,
         on_time_read, on_time_write, NULL),
+    BT_GATT_CHARACTERISTIC(BT_UUID_CATERPILLAR_DIR,
+        BT_GATT_CHRC_READ,
+        BT_GATT_PERM_READ,
+        on_dir_read, NULL, NULL),
 );
 
 /* -------------------------------------------------------------------------- */
@@ -886,9 +928,13 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
     ARG_UNUSED(conn);
     LOG_INF("BLE disconnected (reason %u)", reason);
 
-    /* Stop per-connection data flows (CCC state is not bonded) */
+    /* Stop per-connection data flows (CCC state is not bonded) and
+     * close a running log session — a session ends at the stop click
+     * or at connection loss, whichever comes first.
+     */
     imu_pump_set_sink(NULL);
     dump_abort = true;
+    imu_log_stop();
 
     /* Defer re-advertise — bt_le_adv_start must not be called
      * synchronously from the BLE stack's own callback context.

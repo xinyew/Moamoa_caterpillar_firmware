@@ -31,6 +31,7 @@ UUID_DUMP = _u16(0xFFEB)      # write 8 B request / notify chunks
 UUID_MSG = _u16(0xFFEC)       # notify: text lines
 UUID_LED = _u16(0xFFED)       # write u8 / read u8: heartbeat LED enable
 UUID_TIME = _u16(0xFFEE)      # write u32 LE unix epoch / read device epoch
+UUID_DIR = _u16(0xFFEF)       # read: session directory (newest first)
 
 FREQ_MIN_HZ, FREQ_MAX_HZ = 4, 1000
 VOLT_MIN_MV, VOLT_MAX_MV = 750, 4200
@@ -84,8 +85,8 @@ def encode_log_cmd(cmd: int, policy: int = LOG_POLICY_STOP) -> bytes:
     return bytes([cmd, policy])
 
 
-def encode_dump_req(offset: int, length: int) -> bytes:
-    return struct.pack("<II", offset, length)
+def encode_dump_req(session: int, offset: int, length: int) -> bytes:
+    return struct.pack("<III", session, offset, length)
 
 
 def encode_time(epoch: int) -> bytes:
@@ -191,6 +192,31 @@ class DumpChunk:
 def decode_dump_chunk(data: bytes) -> DumpChunk:
     offset, n, last, _ = struct.unpack_from("<IHBB", data, 0)
     return DumpChunk(offset, bool(last), data[8:8 + n])
+
+
+@dataclass
+class Session:
+    seq: int
+    wall_start: int       # unix epoch, 0 = clock was unsynced
+    rec_count: int
+    odr_code: int
+    content: int
+    accel_fs: int
+    gyro_fs: int
+
+    @property
+    def bytes(self) -> int:
+        return self.rec_count * RECORD_SIZE
+
+
+def decode_sessions(data: bytes) -> list[Session]:
+    n = data[0]
+    out = []
+    for i in range(n):
+        seq, wall, count = struct.unpack_from("<3I", data, 4 + i * 16)
+        odr, content, afs, gfs = struct.unpack_from("<4B", data, 16 + i * 16)
+        out.append(Session(seq, wall, count, odr, content, afs, gfs))
+    return out
 
 
 @dataclass

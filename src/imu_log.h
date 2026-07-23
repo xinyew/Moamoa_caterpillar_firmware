@@ -6,63 +6,65 @@
 #include "common/imu_shared.h"
 
 /*
- * On-chip IMU sample log in RRAM.
+ * On-chip IMU sample log in RRAM, multi-session.
  *
- * Storage is dual-use: the MCUboot secondary slot plus the former FLPR
- * code region (~779 KB total).  Logging and a *staged* OTA image are
- * mutually exclusive — starting a log session invalidates any uploaded
- * (not yet installed) image, and a DFU upload overwrites the log.
- * Installed firmware and the OTA mechanism itself are unaffected.
+ * Storage is dual-use with OTA: the MCUboot secondary slot plus the
+ * former FLPR code region (~780 KB).  A DFU upload overwrites the log
+ * and vice versa (installed firmware and the OTA mechanism itself are
+ * unaffected) — dump before updating.
  *
- * A 32 B session header (magic "CLG1") holds the sampling config so a
- * dump is self-describing.  Records are struct imu_sample (16 B).
- * Fill policy: stop-when-full keeps the oldest data and halts;
- * circular overwrites the oldest.  Counters live in RAM: a log is
- * dumpable until the device reboots or a new session starts.
+ * Layout: a 16-entry session DIRECTORY (512 B) at the region start,
+ * then one shared ring of 16 B records.  Sessions append after each
+ * other; the directory persists across reboots, so old sessions stay
+ * listable/dumpable until erased or overwritten.  Each entry carries
+ * the sampling config and the wall-clock start time (from the 0xFFEE
+ * sync), so any dump is self-describing.
+ *
+ * A session runs from start until stop (BLE), BLE disconnect (the app
+ * auto-closes it), or — under the stop-when-full policy — when writing
+ * on would destroy the oldest surviving session.  Circular sessions
+ * never stop: they overwrite the oldest data and invalidate directory
+ * entries whose records get consumed.  Power loss mid-session loses at
+ * most the last ~8 KB of that session's accounting (the directory
+ * entry is refreshed every 512 records).
  */
 
 #define IMU_LOG_POLICY_STOP     0
 #define IMU_LOG_POLICY_CIRCULAR 1
 
-#define IMU_LOG_HDR_SIZE   32
-#define IMU_LOG_HDR_MAGIC  0x31474C43UL   /* "CLG1" */
+#define IMU_LOG_MAX_SESSIONS    16
 
-struct imu_log_header {
-    uint32_t magic;
-    uint32_t session_id;     /* increments per start */
-    uint8_t  odr_code;
-    uint8_t  content;
-    uint8_t  accel_fs;
-    uint8_t  gyro_fs;
-    uint8_t  policy;
-    uint8_t  record_size;    /* 16 */
-    uint16_t rsvd0;
-    uint32_t start_uptime_s;
-    uint32_t rsvd1[3];
+/* Session summary as reported to the host */
+struct imu_log_session {
+    uint32_t seq;         /* monotonic session id */
+    uint32_t wall_start;  /* unix epoch at start (0 = clock unsynced) */
+    uint32_t rec_count;   /* readable records (clipped if overwritten) */
+    uint8_t  odr_code, content, accel_fs, gyro_fs;
 };
 
 int  imu_log_init(void);
 
-/* Start a session, stamping the current sampling config into the
- * header.  Returns 0 or negative errno.
- */
 int  imu_log_start(uint8_t policy);
 void imu_log_stop(void);
-void imu_log_erase(void);            /* invalidate header, reset counters */
+void imu_log_erase(void);            /* wipe the whole directory */
 
 bool     imu_log_active(void);
 uint8_t  imu_log_policy(void);
-uint32_t imu_log_capacity_bytes(void);   /* record space, excl. header */
-uint32_t imu_log_bytes_stored(void);     /* record bytes currently held */
-uint32_t imu_log_records_total(void);    /* written incl. overwritten */
+uint32_t imu_log_capacity_bytes(void);
+uint32_t imu_log_bytes_stored(void);     /* current/last session bytes */
+uint32_t imu_log_records_total(void);    /* current/last session records */
 
 /* Append records (pump thread only). */
 void imu_log_append(const struct imu_sample *s, uint32_t n);
 
-/* Read the log as a flat logical space for dumping:
- * offset 0..31 = session header, then records oldest-first.
- * Returns bytes read (0 at end), negative errno on error.
+/* List sessions, newest first.  Returns the number written to out. */
+int imu_log_session_list(struct imu_log_session *out, int max);
+
+/* Read a session's records (oldest-first) as a flat byte space.
+ * offset/len in bytes relative to the session's readable data.
+ * Returns bytes read (0 at end / unknown session), negative errno.
  */
-int imu_log_read(uint32_t offset, void *buf, uint32_t len);
+int imu_log_read_session(uint32_t seq, uint32_t offset,
+                         void *buf, uint32_t len);
 
 #endif /* IMU_LOG_H */

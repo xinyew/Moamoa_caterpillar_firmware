@@ -34,8 +34,16 @@ ASM330 --SPI/DRDY--> FLPR core --2048-record ring @0x20036000--> app pump thread
 - The flash log always receives the full configured rate; the live
   stream auto-decimates.  Fill policy per session: stop-when-full or
   circular.
+- The log is multi-session: a 16-entry directory in flash records each
+  session's range, sampling config, and real-world start time (from the
+  0xFFEE clock sync).  Sessions survive reboots; a session ends on the
+  stop command, on BLE disconnect, or (stop-when-full policy) before it
+  would overwrite the oldest surviving session.  Circular sessions
+  overwrite oldest data and drop consumed directory entries.
 - The log region is dual-use with the OTA secondary slot: a DFU upload
-  overwrites the log and vice versa.  Dump before updating.
+  overwrites the log and vice versa.  Dump before updating.  (The
+  slot's first 4 KB are kept erased — MCUboot wipes any non-image bytes
+  it finds at the slot header on every boot.)
 - Boot is idle: rail off, driver asleep.  Every run is started over BLE.
 - Device warnings/errors are pushed on a BLE text characteristic
   (0xFFEC); RTT remains available for wired debugging only.
@@ -54,8 +62,11 @@ ASM330 --SPI/DRDY--> FLPR core --2048-record ring @0x20036000--> app pump thread
 | 0xFFE8 | r/w | IMU config {odr, content, accel_fs, gyro_fs} |
 | 0xFFE9 | notify | Live IMU stream (8 B header + N×16 B records) |
 | 0xFFEA | r/w | Log control (stop/start/erase) + state |
-| 0xFFEB | write+notify | Log dump request → chunked readout |
+| 0xFFEB | write+notify | Dump request {session, offset, len} → chunked readout |
 | 0xFFEC | notify | Warning/error text lines |
+| 0xFFED | r/w | Status-LED heartbeat enable |
+| 0xFFEE | r/w | Wall-clock sync (unix epoch; GUI writes on connect) |
+| 0xFFEF | read | Session directory (up to 16 sessions, newest first) |
 | SMP | — | MCUmgr OTA DFU (MCUboot, overwrite-only, dev-key signed) |
 
 ## Host tools (`scripts/`)

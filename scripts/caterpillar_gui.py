@@ -224,17 +224,21 @@ class BleWorker:
         data = await self.client.read_gatt_char(P.UUID_LOG_CTL)
         return P.decode_log_state(bytes(data))
 
-    async def dump(self, total: int) -> bytes | None:
-        """Fetch `total` logical bytes of the log, chunk-reassembled."""
+    async def read_sessions(self) -> list[P.Session]:
+        data = await self.client.read_gatt_char(P.UUID_DIR)
+        return P.decode_sessions(bytes(data))
+
+    async def dump(self, session: int, total: int) -> bytes | None:
+        """Fetch `total` bytes of one session's records, reassembled."""
         self._dump_buf = bytearray(total)
         self._dump_expected = total
         self._dump_received = 0
         self._dump_done = asyncio.Event()
         t0 = time.monotonic()
 
-        await self.client.write_gatt_char(P.UUID_DUMP,
-                                          P.encode_dump_req(0, total),
-                                          response=True)
+        await self.client.write_gatt_char(
+            P.UUID_DUMP, P.encode_dump_req(session, 0, total),
+            response=True)
         try:
             await asyncio.wait_for(self._dump_done.wait(),
                                    timeout=60 + total / 4096)
@@ -412,6 +416,10 @@ class MainWindow(QMainWindow):
             lambda: asyncio.ensure_future(self._dump_log()))
         self.bar_dump = QProgressBar()
         self.bar_dump.setVisible(False)
+        self.cmb_sessions = QComboBox()
+        self.cmb_sessions.setToolTip(
+            "Stored sessions on the device (survive reboots). "
+            "Refreshed on connect and after each session.")
         self.btn_plot = QPushButton("Plot last dump")
         self.btn_plot.setEnabled(False)
         self.btn_plot.clicked.connect(self._plot_dump)
@@ -422,10 +430,11 @@ class MainWindow(QMainWindow):
         ll.addWidget(self.btn_log, 1, 0)
         ll.addWidget(btn_erase, 1, 1)
         ll.addWidget(self.bar_log, 2, 0, 1, 2)
-        ll.addWidget(self.btn_dump, 3, 0, 1, 2)
-        ll.addWidget(self.bar_dump, 4, 0, 1, 2)
-        ll.addWidget(self.btn_plot, 5, 0)
-        ll.addWidget(btn_open, 5, 1)
+        ll.addWidget(self.cmb_sessions, 3, 0, 1, 2)
+        ll.addWidget(self.btn_dump, 4, 0, 1, 2)
+        ll.addWidget(self.bar_dump, 5, 0, 1, 2)
+        ll.addWidget(self.btn_plot, 6, 0)
+        ll.addWidget(btn_open, 6, 1)
         left.addWidget(log_box)
 
         left.addStretch(1)
@@ -470,7 +479,8 @@ class MainWindow(QMainWindow):
             self.chk_rail, self.chk_drv,
             self.cmb_odr, self.cmb_content, self.cmb_afs, self.cmb_gfs,
             self.btn_apply,
-            self.cmb_policy, self.btn_log, self.btn_erase, self.btn_dump,
+            self.cmb_policy, self.btn_log, self.btn_erase,
+            self.cmb_sessions, self.btn_dump,
         ]
         self._set_connected_ui(False)
 
@@ -508,6 +518,7 @@ class MainWindow(QMainWindow):
                 self._set_connected_ui(True)
                 self._status_timer.start()
                 await self._poll_status()
+                await self._refresh_sessions()
         except Exception as e:
             self.log(f"Connect failed: {e}")
         finally:
@@ -587,6 +598,26 @@ class MainWindow(QMainWindow):
         await self.ble.log_cmd(P.LOG_CMD_STOP)
         self.btn_log.setText("Start session (log + stream)")
         self.log("Session stopped")
+        await self._refresh_sessions()
+
+    async def _refresh_sessions(self):
+        """Sync the stored-session list from the device directory."""
+        try:
+            sessions = await self.ble.read_sessions()
+        except Exception as e:
+            self.log(f"Session list read failed: {e}")
+            return
+        self.cmb_sessions.clear()
+        for s in sessions:
+            when = (time.strftime("%Y-%m-%d %H:%M:%S",
+                                  time.localtime(s.wall_start))
+                    if s.wall_start else "no clock")
+            hz = P.ODR_HZ.get(s.odr_code, "?")
+            self.cmb_sessions.addItem(
+                f"#{s.seq} · {when} · {s.rec_count:,} rec @ {hz} Hz", s)
+        if not sessions:
+            self.cmb_sessions.addItem("(no stored sessions)", None)
+        self.log(f"{len(sessions)} stored session(s) on device")
 
     async def _toggle_session(self):
         if not self.ble.connected:
@@ -647,7 +678,8 @@ class MainWindow(QMainWindow):
             await self._stop_session()
             self.btn_log.setChecked(False)
         await self.ble.log_cmd(P.LOG_CMD_ERASE)
-        self.log("Log erased")
+        self.log("All stored sessions erased")
+        await self._refresh_sessions()
 
     async def _dump_log(self):
         if not self.ble.connected:
@@ -655,65 +687,65 @@ class MainWindow(QMainWindow):
         if self.btn_log.isChecked():
             await self._stop_session()
             self.btn_log.setChecked(False)
-        state = await self.ble.log_state()
-        if state.bytes_stored == 0:
-            self.log("Log is empty — nothing to dump.")
+
+        sess: P.Session | None = self.cmb_sessions.currentData()
+        if sess is None or sess.rec_count == 0:
+            self.log("No session selected / session is empty.")
             return
 
+        stamp = (time.strftime("%Y%m%d_%H%M%S",
+                               time.localtime(sess.wall_start))
+                 if sess.wall_start else f"session{sess.seq}")
         path, _ = QFileDialog.getSaveFileName(
-            self, "Save IMU log", f"imu_log_{time.strftime('%Y%m%d_%H%M%S')}",
+            self, f"Save session #{sess.seq}", f"imu_{stamp}",
             "CSV (*.csv);;NumPy (*.npz)")
         if not path:
             return
 
-        total = P.LOG_HDR_SIZE + state.bytes_stored
+        total = sess.bytes
         self.bar_dump.setVisible(True)
         self.bar_dump.setMaximum(total)
         self.bar_dump.setValue(0)
         self.btn_dump.setEnabled(False)
         try:
-            raw = await self.ble.dump(total)
+            raw = await self.ble.dump(sess.seq, total)
         finally:
             self.btn_dump.setEnabled(True)
             self.bar_dump.setVisible(False)
         if raw is None:
             return
-        self._save_dump(Path(path), raw)
+        self._save_dump(Path(path), raw, sess)
 
     def on_dump_progress(self, received: int, total: int):
         self.bar_dump.setValue(min(received, total))
 
-    def _save_dump(self, path: Path, raw: bytes):
-        try:
-            hdr = P.decode_log_header(raw[:P.LOG_HDR_SIZE])
-        except ValueError as e:
-            self.log(f"Dump parse: {e}")
-            return
-
-        recs = np.array(list(P.unpack_records(raw[P.LOG_HDR_SIZE:])),
-                        dtype=np.int64)
+    def _save_dump(self, path: Path, raw: bytes, sess: P.Session):
+        recs = np.array(list(P.unpack_records(raw)), dtype=np.int64)
         if recs.size == 0:
             self.log("No records in dump.")
             return
 
-        odr = P.ODR_HZ.get(hdr.odr_code, 0)
-        a_scale = P.ACCEL_MG_PER_LSB[hdr.accel_fs] / 1000.0
-        g_scale = P.GYRO_MDPS_PER_LSB[hdr.gyro_fs] / 1000.0
+        odr = P.ODR_HZ.get(sess.odr_code, 0)
+        a_scale = P.ACCEL_MG_PER_LSB[sess.accel_fs] / 1000.0
+        g_scale = P.GYRO_MDPS_PER_LSB[sess.gyro_fs] / 1000.0
         n = recs.shape[0]
         t = np.arange(n) / odr if odr else np.arange(n, dtype=float)
         acc = recs[:, 0:3] * a_scale
         gyr = recs[:, 3:6] * g_scale
         temp = recs[:, 6] / 256.0 + 25.0
         seq = recs[:, 7]
+        when = (time.strftime("%Y-%m-%d %H:%M:%S",
+                              time.localtime(sess.wall_start))
+                if sess.wall_start else "unsynced clock")
 
         base = path.with_suffix("")
         csv_path = base.with_suffix(".csv")
         npz_path = base.with_suffix(".npz")
 
         with open(csv_path, "w", newline="") as f:
-            f.write(f"# Caterpillar IMU log session {hdr.session_id}, "
-                    f"{odr} Hz, accel ±{P.ACCEL_FS_G[hdr.accel_fs]} g, "
-                    f"gyro ±{P.GYRO_FS_DPS[hdr.gyro_fs]} dps\n")
+            f.write(f"# Caterpillar IMU session {sess.seq}, started {when}, "
+                    f"{odr} Hz, accel ±{P.ACCEL_FS_G[sess.accel_fs]} g, "
+                    f"gyro ±{P.GYRO_FS_DPS[sess.gyro_fs]} dps\n")
             f.write("t_s,ax_g,ay_g,az_g,gx_dps,gy_dps,gz_dps,temp_c,seq16\n")
             for i in range(n):
                 f.write(f"{t[i]:.6f},{acc[i,0]:.5f},{acc[i,1]:.5f},"
@@ -723,15 +755,15 @@ class MainWindow(QMainWindow):
         np.savez_compressed(
             npz_path, t_s=t, accel_g=acc, gyro_dps=gyr, temp_c=temp,
             seq16=seq, odr_hz=odr,
-            accel_fs_g=P.ACCEL_FS_G[hdr.accel_fs],
-            gyro_fs_dps=P.GYRO_FS_DPS[hdr.gyro_fs],
-            session_id=hdr.session_id)
+            accel_fs_g=P.ACCEL_FS_G[sess.accel_fs],
+            gyro_fs_dps=P.GYRO_FS_DPS[sess.gyro_fs],
+            session_id=sess.seq, wall_start_epoch=sess.wall_start)
 
         self.log(f"Saved {n} samples -> {csv_path.name} + {npz_path.name}")
 
-        title = (f"session {hdr.session_id} · {odr} Hz · {n} samples · "
-                 f"±{P.ACCEL_FS_G[hdr.accel_fs]} g / "
-                 f"±{P.GYRO_FS_DPS[hdr.gyro_fs]} dps · {csv_path.name}")
+        title = (f"session {sess.seq} · {when} · {odr} Hz · {n} samples · "
+                 f"±{P.ACCEL_FS_G[sess.accel_fs]} g / "
+                 f"±{P.GYRO_FS_DPS[sess.gyro_fs]} dps · {csv_path.name}")
         self._dump_data = (t, acc, gyr, title)
         self.btn_plot.setEnabled(True)
         self._plot_dump()
