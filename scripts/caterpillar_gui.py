@@ -283,6 +283,9 @@ class MainWindow(QMainWindow):
         self._gfs = 0
         self._dump_data = None       # (t, acc_g, gyr_dps, title)
         self._dump_win: DumpPlotWindow | None = None
+        self._odr_hz = 104.0         # updated when config is applied
+        self._seq_last = None        # stream seq16 unwrap state
+        self._seq_abs = 0
 
         self._build_ui()
 
@@ -574,6 +577,7 @@ class MainWindow(QMainWindow):
             return
         self._afs = self.cmb_afs.currentData()
         self._gfs = self.cmb_gfs.currentData()
+        self._odr_hz = float(P.ODR_HZ[self.cmb_odr.currentData()])
         await self.ble.set_imu_cfg(self.cmb_odr.currentData(),
                                    self.cmb_content.currentData(),
                                    self._afs, self._gfs)
@@ -587,6 +591,8 @@ class MainWindow(QMainWindow):
         self._stream_n = 0
         self._stream_t0 = time.monotonic()
         self._stream_dropped = 0
+        self._seq_last = None
+        self._seq_abs = 0
         await self.ble.stream_start()
         self._plot_timer.start()
         self.btn_log.setText("Stop session")
@@ -642,12 +648,25 @@ class MainWindow(QMainWindow):
             return
         recs = recs.reshape(n, 8)
 
-        now = time.monotonic() - self._stream_t0
         acc = recs[:, 0:3].astype(np.float32) * \
             (P.ACCEL_MG_PER_LSB[self._afs] / 1000.0)
         gyr = recs[:, 3:6].astype(np.float32) * \
             (P.GYRO_MDPS_PER_LSB[self._gfs] / 1000.0)
-        t = np.linspace(now - 0.01, now, n)
+
+        # Sample times come from the FLPR-stamped sequence numbers, not
+        # packet arrival: BLE delivers notifications in bursts per
+        # connection event, so arrival-based timestamps bunch samples
+        # into glitchy clusters.  seq16 counts every sensor sample
+        # (including decimated/dropped ones), so seq/ODR is the true
+        # sensor-clock time axis.
+        seq = recs[:, 7].astype(np.int64) & 0xFFFF
+        if self._seq_last is None:
+            self._seq_last = int(seq[0])
+        deltas = np.diff(np.concatenate(([self._seq_last], seq))) % 65536
+        abs_seq = self._seq_abs + np.cumsum(deltas)
+        self._seq_last = int(seq[-1])
+        self._seq_abs = int(abs_seq[-1])
+        t = abs_seq / self._odr_hz
 
         self._t = np.concatenate([self._t, t])[-PLOT_MAX_POINTS:]
         self._acc = np.concatenate([self._acc, acc])[-PLOT_MAX_POINTS:]
