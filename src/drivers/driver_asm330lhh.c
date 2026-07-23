@@ -25,8 +25,10 @@ LOG_MODULE_REGISTER(drv_asm330lhh, LOG_LEVEL_DBG);
 #define CS_PORT         DEVICE_DT_GET(DT_NODELABEL(gpio1))
 #define CS_PIN          9
 
-/* Mode 3 (CPOL=1, CPHA=1); 8 MHz is SPIM21's max, sensor allows 10 MHz */
-static const struct spi_config spi_cfg = {
+/* Mode 3 (CPOL=1, CPHA=1); 8 MHz is SPIM21's max, sensor allows 10 MHz.
+ * Non-const: init probes mode/speed combinations during bring-up.
+ */
+static struct spi_config spi_cfg = {
     .frequency = 8000000U,
     .operation = SPI_OP_MODE_MASTER | SPI_WORD_SET(8) | SPI_TRANSFER_MSB |
                  SPI_MODE_CPOL | SPI_MODE_CPHA,
@@ -170,16 +172,30 @@ int drv_asm330lhh_init(void)
         return ret;
     }
 
-    /* Read WHO_AM_I to confirm the chip is alive on the bus */
-    ret = reg_read(REG_WHO_AM_I, &whoami, 1);
-    if (ret < 0) {
-        LOG_ERR("WHO_AM_I read failed: %d", ret);
-        return ret;
+    /* The first SPI transaction after power-up returns garbage: the
+     * sensor latches into SPI mode on the first CS cycle, and the
+     * mode-3 clock idle level isn't established until the first
+     * transfer.  Issue a discarded dummy read, then verify WHO_AM_I
+     * with retries.  (The pre-retry firmware read once and gave up —
+     * that alone made a working IMU look dead.)
+     */
+    (void)reg_read(REG_WHO_AM_I, &whoami, 1);
+
+    ret = -EIO;
+    for (int attempt = 0; attempt < 3; attempt++) {
+        whoami = 0;
+        ret = reg_read(REG_WHO_AM_I, &whoami, 1);
+        if (ret == 0 && whoami == WHO_AM_I_EXPECT) {
+            break;
+        }
+        LOG_WRN("WHO_AM_I attempt %d: ret=%d val=0x%02X",
+                attempt + 1, ret, whoami);
+        ret = -EIO;
+        k_msleep(2);
     }
-    if (whoami != WHO_AM_I_EXPECT) {
-        LOG_ERR("Bad WHO_AM_I: 0x%02X (expected 0x%02X)",
-                whoami, WHO_AM_I_EXPECT);
-        return -EIO;
+    if (ret < 0) {
+        LOG_ERR("Bad WHO_AM_I (expected 0x%02X)", WHO_AM_I_EXPECT);
+        return ret;
     }
     LOG_INF("ASM330LHHTR on spi21 (WHO_AM_I=0x%02X)", whoami);
 
