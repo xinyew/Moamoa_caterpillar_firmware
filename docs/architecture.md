@@ -32,22 +32,26 @@ SRAM (256 KB):
 ## Boot chain
 
 1. MCUboot validates the primary slot (dev-key signature) and jumps.
-2. App boots **idle**: rail off, DRV8212 asleep, PWM primed at 50 %
-   duty but nothing moves until rail+driver are enabled over BLE.
-   Digipot is pre-programmed to 3.1 V so the rail comes up safe.
-   A board reset is therefore always a safe motor-stop.
-3. `src/flpr_launch.c` memcpys the embedded FLPR image to 0x20028000,
-   sets the SPU attribute, INITPC, CPURUN — the only launcher in the
-   system.  The devicetree deliberately has no `execution-memory`
-   property: a DT-based launcher would also appear in MCUboot's build
-   and re-copy over the running coprocessor (historic fatal bug).
+2. App boots **idle** with the **persisted settings** applied: rail
+   off, DRV8212 asleep, PWM primed at 50 % duty at the last-used
+   frequency; the digipot is pre-programmed to the persisted VDC so
+   the rail comes up at a known voltage when enabled.  A board reset
+   is therefore always a safe motor-stop.
+3. `src/imu/flpr_launch.c` memcpys the embedded FLPR image to
+   0x20028000, sets the SPU attribute, INITPC, CPURUN — the only
+   launcher in the system.  The devicetree deliberately has no
+   `execution-memory` property: a DT-based launcher would also appear
+   in MCUboot's build and re-copy over the running coprocessor
+   (historic fatal bug).
 4. FLPR boots its own Zephyr, initializes the ASM330 over SPI
    (dummy-first-read + retries — the sensor's first transaction after
-   power-up returns garbage), applies the default config (833 Hz,
-   accel+gyro, ±2 g/±250 dps), publishes `magic`, then samples
-   DRDY-paced, publishing raw records into the ring (never blocks;
-   drops are counted).  Config changes arrive via a seq-numbered
-   block in shared SRAM, polled every 32 samples.
+   power-up returns garbage), publishes `magic`, and leaves the sensor
+   **powered down**: sampling is on-demand, enabled by the app-side
+   arbiter (`app/session.c`) only while a log session or stream needs
+   data.  When enabled it samples DRDY-paced into the ring (never
+   blocks; drops are counted).  Config arrives via a seq-numbered
+   block in shared SRAM, checked every 32 samples while running and
+   every ~100 ms while idle (enable latency ~100 ms).
 
 ## Source layering (biosensor-style main→app→adapter, v1.4.1)
 
@@ -69,9 +73,12 @@ nothing outside `ble_transport.c` may send notifications.
 
 | Thread | Prio | Role |
 |---|---|---|
-| pump (`imu_pump.c`) | 4 | drains the ring every 4 ms → `imu_log_append` + stream sink |
-| dump (`ble_interface.c`) | 7 | streams session data as credit-paced notifications |
-| main | — | 1 Hz health monitor → warnings to 0xFFEC (FLPR dead, IMU dead, samples stalled, overrun deltas) |
+| pump (`imu/imu_pump.c`) | 4 | drains the FLPR ring every 4 ms — **memcpy only** into the log staging ring + stream FIFO |
+| flash writer (`imu/imu_log.c`) | 6 | persists 4 KB batches from the 24 KB staging ring (each flash op waits for an MPSL radio timeslot — never in a real-time thread) |
+| dump (`ble/ble_transport.c`) | 7 | streams session data as credit-paced notifications |
+| TX (`ble/ble_transport.c`) | 9 | sends stream packets + message lines, credit-paced (≤2 in flight) |
+| device_cmd (`app/device_cmd.c`) | 10 | executes slow commands (VDC ramp, log start/stop/erase) off the BT RX thread |
+| main | — | 1 Hz health monitor → warnings to 0xFFEC (FLPR dead, IMU dead, samples stalled, overrun/backlog deltas) |
 | BT stack threads | — | standard Zephyr controller/host |
 
 Design notes:

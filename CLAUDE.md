@@ -33,11 +33,16 @@ Control GUI (motor + IMU config + live plots + log dump; standalone,
 protocol spec in scripts/protocol.py):
 $ pip install -r scripts/requirements.txt
 $ python scripts/caterpillar_gui.py
-IMU data path (v1.2.0+): FLPR samples at configured ODR (12.5 Hz-6.66 kHz)
-into a shared-SRAM ring; app pump logs full rate to 798 KB RRAM
-(dual-use with OTA secondary slot - a DFU upload overwrites the log)
-and streams decimated (~20 KiB/s) over 0xFFE9. Warnings/errors go to
-0xFFEC (GUI console). Boot is idle: rail off, driver asleep, duty 0.
+IMU data path (v1.4+): sampling is ON-DEMAND - the sensor is powered
+down unless a log session runs or the stream is subscribed. FLPR
+samples at the configured ODR (12.5 Hz-6.66 kHz) into a shared-SRAM
+ring; the pump stages to a flash-writer thread (full rate, 679 KB
+circular log, dual-use with the OTA secondary slot - a DFU wipes it)
+and a TX thread (decimated preview, 0xFFE9; preview rate settable).
+Warnings/errors: live on 0xFFEC + queryable 2 KB history on 0xFFF0.
+Boot is idle (rail off, driver asleep) but wakes with the LAST-USED
+settings (freq/VDC/IMU cfg/LED persist). Clean logging envelope:
+<=3.33 kHz while connected; 6.66 kHz sheds a counted ~10%.
 Load RTT console and connect to the board (makesure to set a timeout of 5 seconds, if there's nothing or returned meaning no output):
 $ & "~\Downloads\SimplicityCommander-Windows\SimplicityCommander-Windows\Commander-cli_win32_x64_1v24p1b1980\Simplicity Commander CLI\commander-cli.exe"  rtt connect --device nrf54l15_M33
 

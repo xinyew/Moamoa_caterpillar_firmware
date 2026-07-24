@@ -5,9 +5,11 @@
 ```
 ASM330LHH --SPI 8 MHz / DRDY--> FLPR core (RISC-V)
     --2048-record SPSC ring in shared SRAM @0x20036000-->
-app pump thread (4 ms poll)
-    ├─> RRAM session log   (ALWAYS full configured rate)
-    └─> BLE live stream    (decimated preview, 0xFFE9)
+app pump thread (4 ms poll, memcpy only — never blocks)
+    ├─> 24 KB staging ring --> flash-writer thread --> RRAM session log
+    │                          (4 KB batches, ALWAYS full rate)
+    └─> stream FIFO --------> TX thread --> BLE preview (0xFFE9,
+                               credit-paced, decimated)
 ```
 
 - **Sampling is on-demand** (v1.4.0): the sensor is powered down unless

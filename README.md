@@ -12,9 +12,13 @@ OTA update, both cores.
 **What it does**
 
 - Independent motor control: VDC 0.75–4.2 V (digipot) × PWM 4–1000 Hz
-- IMU sessions: full-rate circular flash log (679 KB) + decimated live
-  BLE preview, wall-clock-stamped session directory, per-session dump
-- Full BLE control surface + open OTA DFU (MCUboot, dev-key signed)
+- IMU sessions: on-demand sampling (sensor off when idle), full-rate
+  circular flash log (679 KB) + decimated live BLE preview,
+  wall-clock-stamped session directory, per-session dump
+- Settings persist across reboots (YAML registry, applied at boot;
+  motor always boots off)
+- Full BLE control surface + open OTA DFU (MCUboot, dev-key signed);
+  device warnings live (0xFFEC) and as queryable history (0xFFF0)
 - PySide6 GUI and CLI for everything
 
 ## Documentation
@@ -24,7 +28,8 @@ OTA update, both cores.
 | [docs/ble-protocol.md](docs/ble-protocol.md) | GATT service, every characteristic, byte-level packet layouts, host/GUI protocol flows |
 | [docs/imu-logging.md](docs/imu-logging.md) | data path, rate envelope, flash layout, session/circular semantics, dump file formats, caveats |
 | [docs/architecture.md](docs/architecture.md) | cores, memory maps, boot chain, threads, motor chain |
-| [docs/build-flash-ota.md](docs/build-flash-ota.md) | build command, versioning rules, SWD flash, OTA, RTT, IntelliSense |
+| [docs/build-flash-ota.md](docs/build-flash-ota.md) | build command, versioning rules, SWD flash, OTA, RTT, IntelliSense, line endings |
+| [docs/settings.md](docs/settings.md) | device settings table (generated from settings.yml) |
 | [CLAUDE.md](CLAUDE.md) | compact command reference |
 
 ## Quick start

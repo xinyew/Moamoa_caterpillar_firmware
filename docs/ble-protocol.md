@@ -3,7 +3,7 @@
 Device name: **`Caterpillar`** · single connection · no pairing/bonding
 (intentionally open research device).  All multi-byte fields are
 **little-endian**.  Authoritative implementations:
-`src/interface/ble_interface.c` (firmware) and `scripts/protocol.py`
+`src/ble/ble_interface.c` (firmware) and `scripts/protocol.py`
 (host spec used by the GUI); `scripts/ble_control.py` carries its own
 inlined copies.  **Change the protocol → update all three.**
 
@@ -66,14 +66,22 @@ Write 4 or 6 B: `{odr_code u8, content u8, accel_fs u8, gyro_fs u8
 ~1300 samples/s link budget).
 
 - `odr_code`: 1=12.5, 2=26, 3=52, 4=104, 5=208, 6=416, 7=833, 8=1660,
-  9=3330, 10=6660 Hz.  Boot default: 7 (833 Hz).
-- `content`: bit0 accel, bit1 gyro (0 rejected; disabled sensor powers down)
+  9=3330, 10=6660 Hz.  Defaults persist in device settings (factory
+  default 7 = 833 Hz).
+- `content`: bit0 accel, bit1 gyro (0 rejected in writes; the sensor
+  itself uses 0 = powered down)
 - `accel_fs`: 0=±2 g, 1=±4 g, 2=±8 g, 3=±16 g
 - `gyro_fs`: 0=±250, 1=±500, 2=±1000, 3=±2000 dps
 
 Read 12 B: `{odr, content, accel_fs, gyro_fs, applied u8,
 status i8 (0 ok / −errno), decim u8, rsvd, overruns u32}`.
 `applied=1` confirms the FLPR programmed the sensor.
+
+**On-demand sampling**: the sensor is powered down unless a log
+session runs or the stream is subscribed.  The read reports the
+*applied* state, so `content` reads 0 while idle — the configured
+values are remembered in settings and applied on the next enable
+(~100 ms wake).
 
 ## Sample record (16 B, used by stream and log)
 
@@ -100,6 +108,12 @@ Write: `{cmd u8, arg u8}` — cmd 0 = stop, 1 = start (arg ignored;
 storage is always circular), 2 = erase all sessions.
 Read 20 B: `{active u8, policy u8, rsvd u16, bytes_stored u32,
 capacity u32, records_total u32, overruns u32}`.
+
+**Commands execute asynchronously** (queued off the BT RX thread): the
+write ack means *accepted*; completion is visible via the status poll
+and the directory.  Stop can take up to ~1 s (flash-writer drain) —
+hosts should settle before refreshing 0xFFEF.  The same applies to
+VDC writes (0xFFE2): the ramp runs in the background at 10 ms/tap.
 
 A running session is auto-stopped by BLE disconnect.
 
@@ -134,7 +148,8 @@ Effective rate ≈ 18–24 KiB/s.
 2. Write 0xFFEE with the current unix time (timestamps for sessions).
 3. Poll 0xFFE6 at 1 Hz; re-read 0xFFEF whenever the session set changes.
 4. Apply 0xFFE8 config → start log (0xFFEA) + subscribe 0xFFE9
-   together; stop both together; then refresh 0xFFEF.
+   together; stop both together, settle ~1 s (async stop), then
+   refresh 0xFFEF.
 5. Dump: pick a session from 0xFFEF, request `{seq, 0, rec_count*16}`,
    reassemble chunks by offset, resume on 5 s silence.
 
