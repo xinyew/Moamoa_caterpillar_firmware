@@ -1,7 +1,0 @@
-# settings.yml must be byte-identical on every checkout: the build
-# verifies its sha1 against a stamp in the generated settings_gen.h,
-# and CRLF conversion on Windows checkouts would false-positive the
-# drift guard.
-settings.yml text eol=lf
-src/settings_gen.h text eol=lf
-scripts/protocol_limits.py text eol=lf
