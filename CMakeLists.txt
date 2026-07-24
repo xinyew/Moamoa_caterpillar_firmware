@@ -50,6 +50,7 @@ target_sources(app PRIVATE
     src/flpr_launch.c
     src/imu_pump.c
     src/imu_log.c
+    src/device_cmd.c
     src/drivers/driver_stbb1_apur.c
     src/drivers/driver_drv8212.c
     src/drivers/max5419.c

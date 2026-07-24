@@ -39,6 +39,7 @@
 #include "../drivers/driver_stbb1_apur.h"
 #include "../drivers/driver_drv8212.h"
 #include "../drivers/driver_led.h"
+#include "../device_cmd.h"
 #include "../imu_pump.h"
 #include "../imu_log.h"
 #include "common/imu_shared.h"
@@ -177,18 +178,16 @@ static ssize_t on_volt_write(struct bt_conn *conn,
         return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
     }
 
-    int ret = max5419_set_voltage((float)mv / 1000.0f);
-    if (ret < 0) {
+    /* The digipot ramps at 10 ms/tap (up to ~1.5 s for a full swing);
+     * running that here would stall the BT RX thread and all inbound
+     * traffic with it.  Validate, enqueue, ack.
+     */
+    struct device_cmd cmd = {
+        .type = DEVICE_CMD_SET_VOLT_MV,
+        .volt_mv = mv,
+    };
+    if (device_cmd_submit(&cmd) < 0) {
         return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
-    }
-
-    /* Read back the rail after the ramp settles, for the log */
-    k_msleep(20);
-    int32_t meas_mv = 0;
-    if (drv_vdc_sense_read_mv(&meas_mv) == 0) {
-        LOG_INF("BLE: VDC -> %u mV (measured %d mV)", mv, meas_mv);
-    } else {
-        LOG_INF("BLE: VDC -> %u mV", mv);
     }
     return len;
 }
@@ -718,7 +717,7 @@ static struct bt_conn *cur_conn;
  * so flash writes get MPSL timeslots); slow=false: 7.5-15 ms for
  * responsive control and dumps.
  */
-static void session_conn_params(bool slow)
+void ble_session_conn_params(bool slow)
 {
     if (cur_conn == NULL) {
         return;
@@ -757,29 +756,24 @@ static ssize_t on_logctl_write(struct bt_conn *conn,
 
     const uint8_t *p = buf;
 
-    switch (p[0]) {
-    case LOGCTL_CMD_STOP:
-        imu_log_stop();
-        session_conn_params(false);
-        break;
-    case LOGCTL_CMD_START: {
-        uint8_t policy = (len >= 2) ? p[1] : IMU_LOG_POLICY_STOP;
-        if (imu_log_start(policy) < 0) {
-            return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
-        }
-        /* Wide connection interval while logging: every radio event
-         * blocks an MPSL flash timeslot, and at high ODR the log
-         * writer needs that air time more than the (capped) preview
-         * does.  Restored to fast params on stop.
-         */
-        session_conn_params(true);
-        break;
-    }
-    case LOGCTL_CMD_ERASE:
-        imu_log_erase();
-        break;
-    default:
+    if (p[0] > LOGCTL_CMD_ERASE) {
         return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
+    }
+    if (p[0] == LOGCTL_CMD_START && imu_log_active()) {
+        return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
+    }
+
+    /* Stop waits up to ~1 s for the flash writer to drain and erase
+     * does timeslot-synced flash writes — both far too slow for the
+     * BT RX thread.  Validate, enqueue, ack; the status poll and the
+     * session directory reflect completion.
+     */
+    struct device_cmd cmd = {
+        .type = DEVICE_CMD_LOG,
+        .log.op = p[0],
+    };
+    if (device_cmd_submit(&cmd) < 0) {
+        return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
     }
     return len;
 }

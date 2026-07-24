@@ -652,6 +652,8 @@ class MainWindow(QMainWindow):
         await self.ble.log_cmd(P.LOG_CMD_STOP)
         self.btn_log.setText("Start session (log + stream)")
         self.log("Session stopped")
+        # stop executes async on-device (flash writer drain, up to ~1 s)
+        await asyncio.sleep(1.0)
         await self._refresh_sessions()
 
     async def _refresh_sessions(self):
@@ -757,6 +759,7 @@ class MainWindow(QMainWindow):
             self.btn_log.setChecked(False)
         await self.ble.log_cmd(P.LOG_CMD_ERASE)
         self.log("All stored sessions erased")
+        await asyncio.sleep(0.5)      # erase executes async on-device
         await self._refresh_sessions()
 
     async def _dump_log(self):

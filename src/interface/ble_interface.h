@@ -31,4 +31,12 @@ void ble_msg(const char *fmt, ...);
  */
 uint32_t ble_wall_now(void);
 
+/**
+ * @brief Switch connection parameters for a log session.
+ *
+ * slow=true widens the interval to ~50 ms (frees radio air so flash
+ * writes get MPSL timeslots); slow=false restores 7.5–15 ms.
+ */
+void ble_session_conn_params(bool slow);
+
 #endif /* BLE_INTERFACE_H */
