@@ -51,9 +51,12 @@ int main(void)
     sh->cfg_applied = 0;
     sh->cfg_status = 0;
 
-    /* Boot default sampling config; the app/GUI overwrites per session */
+    /* Boot with the sensor POWERED DOWN (content 0): sampling is
+     * on-demand — the app enables it only while a log session or live
+     * stream needs data.
+     */
     sh->cfg_odr      = IMU_CFG_DEFAULT_ODR;
-    sh->cfg_content  = IMU_CFG_DEFAULT_CONTENT;
+    sh->cfg_content  = 0;
     sh->cfg_accel_fs = IMU_CFG_DEFAULT_ACCEL_FS;
     sh->cfg_gyro_fs  = IMU_CFG_DEFAULT_GYRO_FS;
     sh->cfg_seq      = 1;
@@ -85,9 +88,9 @@ int main(void)
     uint32_t since_cfg_poll = 0;
 
     while (1) {
-        if (drv_asm330lhh_wait_data(500) != 0) {
-            /* Timeout: idle (or dead) sensor — good moment to check
-             * for a pending reconfig that might revive it.
+        if (drv_asm330lhh_wait_data(100) != 0) {
+            /* Timeout: idle/powered-down sensor — check for a pending
+             * reconfig so an enable takes effect within ~100 ms.
              */
             apply_config(sh);
             continue;

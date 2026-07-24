@@ -221,10 +221,11 @@ int drv_asm330lhh_configure(uint8_t odr_code, uint8_t content,
 
     if (odr_code < IMU_ODR_12HZ5 || odr_code > IMU_ODR_6660HZ ||
         (content & ~(IMU_CONTENT_ACCEL | IMU_CONTENT_GYRO)) != 0 ||
-        content == 0 || accel_fs > 3 || gyro_fs > 3) {
+        accel_fs > 3 || gyro_fs > 3) {
         return -EINVAL;
     }
 
+    /* content == 0: power the whole sensor down (on-demand sampling) */
     bool accel_on = (content & IMU_CONTENT_ACCEL) != 0;
     bool gyro_on  = (content & IMU_CONTENT_GYRO) != 0;
 
@@ -234,10 +235,11 @@ int drv_asm330lhh_configure(uint8_t odr_code, uint8_t content,
     uint8_t ctrl2 = gyro_on  ? (uint8_t)((odr_code << 4) |
                                          (gyro_fs << 2)) : 0;
 
-    /* DRDY source: gyro when enabled (accel DRDY otherwise) — with a
-     * shared ODR both assert at the same rate.
+    /* DRDY source: gyro when enabled (accel DRDY otherwise); nothing
+     * routed when powered down.  With a shared ODR both assert at the
+     * same rate.
      */
-    uint8_t int1 = gyro_on ? INT1_DRDY_G : INT1_DRDY_XL;
+    uint8_t int1 = gyro_on ? INT1_DRDY_G : (accel_on ? INT1_DRDY_XL : 0);
 
     ret = reg_write(REG_CTRL1_XL, ctrl1);
     if (ret == 0) ret = reg_write(REG_CTRL2_G, ctrl2);

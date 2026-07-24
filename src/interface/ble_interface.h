@@ -45,4 +45,16 @@ void ble_session_conn_params(bool slow);
  */
 void ble_stream_set_preview(uint16_t hz);
 
+/**
+ * @brief Whether anything currently needs IMU data (log session or
+ *        subscribed stream).
+ */
+bool ble_imu_demand(void);
+
+/**
+ * @brief Re-arbitrate on-demand sampling: powers the sensor up with
+ *        the persisted config when there is demand, down otherwise.
+ */
+void ble_imu_run_update(void);
+
 #endif /* BLE_INTERFACE_H */

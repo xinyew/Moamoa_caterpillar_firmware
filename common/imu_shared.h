@@ -41,7 +41,10 @@
 #define IMU_ODR_3330HZ    9
 #define IMU_ODR_6660HZ    10
 
-/* cfg_content bits */
+/* cfg_content bits.  0 = SENSOR POWERED DOWN (on-demand sampling: the
+ * app enables content only while a log session or live stream needs
+ * data, and powers the sensor off otherwise).
+ */
 #define IMU_CONTENT_ACCEL 0x01
 #define IMU_CONTENT_GYRO  0x02
 

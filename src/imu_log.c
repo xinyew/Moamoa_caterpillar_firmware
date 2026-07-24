@@ -30,6 +30,7 @@
  */
 
 #include "imu_log.h"
+#include "settings_store.h"
 #include "interface/ble_interface.h"   /* ble_wall_now() */
 
 #include <zephyr/kernel.h>
@@ -354,8 +355,6 @@ int imu_log_start(uint8_t policy)
         return -EBUSY;
     }
 
-    struct imu_shared *sh = IMU_SHARED;
-
     cur_seq = seq_next++;
     cur_slot = (cur_seq - 1) % IMU_LOG_MAX_SESSIONS;
     cur_start = total_abs;
@@ -364,16 +363,20 @@ int imu_log_start(uint8_t policy)
     stage_tail = stage_head;     /* discard any stale staged records */
     log_dropped = 0;
 
+    /* Stamp the header from the persisted settings — the shared block
+     * may still read content=0 at this instant (on-demand sampling is
+     * enabled right after start).
+     */
     struct dir_entry e = {
         .magic = ENTRY_MAGIC,
         .seq = cur_seq,
         .start_rec = cur_start,
         .rec_count = 0,
         .wall_start = ble_wall_now(),
-        .odr_code = sh->cfg_odr,
-        .content = sh->cfg_content,
-        .accel_fs = sh->cfg_accel_fs,
-        .gyro_fs = sh->cfg_gyro_fs,
+        .odr_code = (uint8_t)settings_get(SETTING_IMU_ODR_CODE),
+        .content = (uint8_t)settings_get(SETTING_IMU_CONTENT),
+        .accel_fs = (uint8_t)settings_get(SETTING_IMU_ACCEL_FS),
+        .gyro_fs = (uint8_t)settings_get(SETTING_IMU_GYRO_FS),
         .policy = IMU_LOG_POLICY_CIRCULAR,
         .open = 1,
     };

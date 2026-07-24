@@ -483,6 +483,44 @@ void ble_stream_set_preview(uint16_t hz)
     stream_update_decim();
 }
 
+/* -------------------------------------------------------------------------- */
+/*  On-demand sampling arbiter                                                */
+/*                                                                            */
+/*  The IMU is powered down unless someone needs data: a running log          */
+/*  session or a subscribed live stream.  Config changes while idle are       */
+/*  remembered (settings) and applied on the next enable.                     */
+/* -------------------------------------------------------------------------- */
+
+static bool stream_subscribed;
+
+bool ble_imu_demand(void)
+{
+    return stream_subscribed || imu_log_active();
+}
+
+void ble_imu_run_update(void)
+{
+    struct imu_shared *sh = IMU_SHARED;
+
+    if (sh->magic != IMU_SHARED_MAGIC) {
+        return;
+    }
+
+    uint8_t content = ble_imu_demand()
+        ? (uint8_t)settings_get(SETTING_IMU_CONTENT) : 0;
+
+    sh->cfg_odr = (uint8_t)settings_get(SETTING_IMU_ODR_CODE);
+    sh->cfg_content = content;
+    sh->cfg_accel_fs = (uint8_t)settings_get(SETTING_IMU_ACCEL_FS);
+    sh->cfg_gyro_fs = (uint8_t)settings_get(SETTING_IMU_GYRO_FS);
+    barrier_dmem_fence_full();
+    sh->cfg_seq = sh->cfg_seq + 1;
+
+    stream_update_decim();
+    LOG_INF("IMU %s (odr code %u)", content ? "RUNNING" : "powered down",
+            sh->cfg_odr);
+}
+
 static ssize_t on_imucfg_write(struct bt_conn *conn,
                                const struct bt_gatt_attr *attr,
                                const void *buf, uint16_t len,
@@ -503,17 +541,9 @@ static ssize_t on_imucfg_write(struct bt_conn *conn,
         return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
     }
 
-    struct imu_shared *sh = IMU_SHARED;
-    if (sh->magic != IMU_SHARED_MAGIC) {
+    if (IMU_SHARED->magic != IMU_SHARED_MAGIC) {
         return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
     }
-
-    sh->cfg_odr = odr;
-    sh->cfg_content = content;
-    sh->cfg_accel_fs = afs;
-    sh->cfg_gyro_fs = gfs;
-    barrier_dmem_fence_full();
-    sh->cfg_seq = sh->cfg_seq + 1;
 
     /* Optional bytes 4-5: live-preview rate cap in Hz (u16 LE);
      * 0 or absent = auto (whatever the link budget allows).  Logging
@@ -526,6 +556,11 @@ static ssize_t on_imucfg_write(struct bt_conn *conn,
     settings_set(SETTING_IMU_ACCEL_FS, afs);
     settings_set(SETTING_IMU_GYRO_FS, gfs);
     settings_set(SETTING_PREVIEW_HZ, stream_preview_hz);
+
+    /* Applied to the sensor only if something is consuming data;
+     * otherwise remembered and applied on the next enable.
+     */
+    ble_imu_run_update();
 
     LOG_INF("BLE: IMU cfg -> odr=%u Hz content=0x%x fs=%u/%u "
             "preview=%u Hz (decim %u)", odr_hz[odr], content, afs, gfs,
@@ -717,11 +752,14 @@ static void stream_ccc_changed(const struct bt_gatt_attr *attr, uint16_t value)
         stream_max = STREAM_MAX_SAMPLES;
         stream_update_decim();
         imu_pump_set_sink(stream_sink);
+        stream_subscribed = true;
         LOG_INF("BLE: IMU stream ON (decim %u)", stream_decim);
     } else {
         imu_pump_set_sink(NULL);
+        stream_subscribed = false;
         LOG_INF("BLE: IMU stream OFF");
     }
+    ble_imu_run_update();
 }
 
 /* -------------------------------------------------------------------------- */

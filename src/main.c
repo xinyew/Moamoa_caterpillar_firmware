@@ -141,16 +141,11 @@ int main(void)
             LOG_INF("FLPR running, fw v%u.%u.%u",
                     (v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF);
 
-            /* Apply the persisted sampling config (the FLPR booted
-             * with its own compile-time default until now)
+            /* Arbitrate on-demand sampling with the persisted config
+             * (no consumer at boot -> sensor stays powered down)
              */
-            sh->cfg_odr = (uint8_t)settings_get(SETTING_IMU_ODR_CODE);
-            sh->cfg_content = (uint8_t)settings_get(SETTING_IMU_CONTENT);
-            sh->cfg_accel_fs = (uint8_t)settings_get(SETTING_IMU_ACCEL_FS);
-            sh->cfg_gyro_fs = (uint8_t)settings_get(SETTING_IMU_GYRO_FS);
-            barrier_dmem_fence_full();
-            sh->cfg_seq = sh->cfg_seq + 1;
             ble_stream_set_preview(settings_get(SETTING_PREVIEW_HZ));
+            ble_imu_run_update();
         }
 
         uint32_t drained = imu_pump_drained();
@@ -178,7 +173,10 @@ int main(void)
             } else if (!sh->imu_ok) {
                 last_warn = now;
                 ble_msg("IMU init failed (WHO_AM_I=0x%02x)", sh->whoami);
-            } else if (drained == last_drained) {
+            } else if (drained == last_drained && ble_imu_demand()) {
+                /* Stalled only counts when something WANTS data —
+                 * idle (powered-down) sampling is normal now
+                 */
                 last_warn = now;
                 ble_msg("IMU samples stalled at %u", drained);
             }

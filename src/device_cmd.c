@@ -48,10 +48,12 @@ static void execute(const struct device_cmd *cmd)
         case 0:                          /* stop */
             imu_log_stop();
             ble_session_conn_params(false);
+            ble_imu_run_update();        /* power down if stream idle */
             break;
         case 1:                          /* start (always circular) */
             if (imu_log_start(1) == 0) {
                 ble_session_conn_params(true);
+                ble_imu_run_update();    /* power the sensor up */
             }
             break;
         case 2:                          /* erase */
