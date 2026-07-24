@@ -51,6 +51,7 @@ radio silent) and boots.  Same-image upload is a benign no-op.
 Verify with `--read`: app version, FLPR version, IMU ok.
 
 Rules:
+
 - The device must be disconnected from other centrals (GUI!) — the
   scan cannot see a connected device.
 - OTA wipes all stored log sessions; dump first.

@@ -47,7 +47,16 @@ static void pump_thread(void *a, void *b, void *c)
     static struct imu_sample chunk[PUMP_CHUNK];
 
     while (1) {
+        int64_t t_sleep = k_uptime_get();
+
         k_msleep(PUMP_PERIOD_MS);
+
+        int64_t t_wake = k_uptime_get();
+
+        if (t_wake - t_sleep > 50) {
+            LOG_WRN("pump not scheduled for %lld ms",
+                    t_wake - t_sleep - PUMP_PERIOD_MS);
+        }
 
         if (sh->magic != IMU_SHARED_MAGIC || !sh->imu_ok) {
             continue;
@@ -75,11 +84,24 @@ static void pump_thread(void *a, void *b, void *c)
             sh->tail = tail;
             drained_total += n;
 
+            int64_t t0 = k_uptime_get();
+
             imu_log_append(chunk, n);
+
+            int64_t t1 = k_uptime_get();
 
             imu_stream_sink_t sink = stream_sink;
             if (sink != NULL) {
                 sink(chunk, n);
+            }
+
+            int64_t t2 = k_uptime_get();
+
+            if (t1 - t0 > 50) {
+                LOG_WRN("log_append(%u) took %lld ms", n, t1 - t0);
+            }
+            if (t2 - t1 > 50) {
+                LOG_WRN("stream sink(%u) took %lld ms", n, t2 - t1);
             }
         }
     }

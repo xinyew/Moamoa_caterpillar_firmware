@@ -538,77 +538,164 @@ static ssize_t on_imucfg_read(struct bt_conn *conn,
 }
 
 /* -------------------------------------------------------------------------- */
-/*  Live IMU stream (0xFFE9, notify)                                          */
+/*  Notification TX thread — live stream (0xFFE9) + message lines (0xFFEC)    */
 /*                                                                            */
-/*  Packet: 8 B header + N × 16 B struct imu_sample:                          */
+/*  The pump thread must NEVER call into the BT stack: bt_gatt_notify can    */
+/*  block indefinitely under TX-context exhaustion (proven on hardware by    */
+/*  the dump wedge), and a blocked pump overruns the FLPR ring.  Instead     */
+/*  the sink stages picked samples into an SPSC FIFO and this thread does    */
+/*  all sending, credit-paced (≤2 notifications in flight) so the blocking  */
+/*  path is never entered.  ble_msg() lines ride the same thread.            */
+/*                                                                            */
+/*  Stream packet: 8 B header + N × 16 B struct imu_sample:                   */
 /*    0 u8 N   1 u8 decim   2 u8 flags   3 u8 rsvd   4 u32 dropped samples    */
-/*  Decimated to ~1300 samples/s; if notification buffers run out the         */
-/*  packet is dropped and counted (flash logging is unaffected).              */
 /* -------------------------------------------------------------------------- */
 
 #define STREAM_MAX_SAMPLES  14
 #define STREAM_HDR          8
 
+#define SFIFO_N   256               /* staged samples, power of two */
+#define MSGQ_N    4
+#define MSG_LEN   120
+
+static struct imu_sample sfifo[SFIFO_N];
+static volatile uint32_t sfifo_head;   /* producer: pump (sink) */
+static volatile uint32_t sfifo_tail;   /* consumer: TX thread   */
+
+static char msgq[MSGQ_N][MSG_LEN];
+static volatile uint32_t msgq_head, msgq_tail;
+static struct k_spinlock msgq_lock;    /* multiple msg producers */
+
 static uint8_t stream_pkt[STREAM_HDR + STREAM_MAX_SAMPLES * 16];
-static uint8_t stream_fill;          /* samples in stream_pkt */
 static uint8_t stream_max = STREAM_MAX_SAMPLES;
 static uint32_t stream_sample_ctr;
 static uint32_t stream_dropped;
-static int64_t stream_first_ts;
+static int64_t sfifo_ts;               /* when the FIFO went non-empty */
 
-static void stream_send(void)
+static K_SEM_DEFINE(tx_wake, 0, 1);
+static K_SEM_DEFINE(tx_credits, 2, 2);
+
+static void tx_sent_cb(struct bt_conn *conn, void *user_data)
 {
-    if (stream_fill == 0) {
-        return;
-    }
-
-    stream_pkt[0] = stream_fill;
-    stream_pkt[1] = stream_decim;
-    stream_pkt[2] = 0;
-    stream_pkt[3] = 0;
-    sys_put_le32(stream_dropped, &stream_pkt[4]);
-
-    int ret = bt_gatt_notify_uuid(NULL, BT_UUID_CATERPILLAR_STREAM,
-                                  caterpillar_svc.attrs, stream_pkt,
-                                  STREAM_HDR + stream_fill * 16);
-    if (ret == -EMSGSIZE && stream_max > 2) {
-        stream_max /= 2;         /* small MTU central — shrink packets */
-        stream_dropped += stream_fill;
-    } else if (ret < 0) {
-        stream_dropped += stream_fill;   /* no buffers / not connected */
-    }
-    stream_fill = 0;
+    ARG_UNUSED(conn); ARG_UNUSED(user_data);
+    k_sem_give(&tx_credits);
 }
 
+/* Send one notification, credit-paced.  Returns false if dropped
+ * (congestion, disconnect, jam) — callers discard, never retry stale
+ * preview data.
+ */
+static bool tx_notify(const struct bt_uuid *uuid, const void *data,
+                      uint16_t len)
+{
+    if (k_sem_take(&tx_credits, K_MSEC(500)) != 0) {
+        return false;                /* TX jammed — drop */
+    }
+
+    struct bt_gatt_notify_params np = {
+        .uuid = uuid,
+        .attr = caterpillar_svc.attrs,
+        .data = data,
+        .len = len,
+        .func = tx_sent_cb,
+    };
+    int ret;
+    int tries = 0;
+
+    do {
+        ret = bt_gatt_notify_cb(NULL, &np);
+        if (ret == -ENOMEM || ret == -EAGAIN || ret == -ENOBUFS) {
+            k_msleep(1);
+        } else {
+            break;
+        }
+    } while (++tries < 100);
+
+    if (ret < 0) {
+        k_sem_give(&tx_credits);     /* never handed to the stack */
+        return false;
+    }
+    return true;
+}
+
+/* Pump-context sink: decimate and stage.  No BT calls, no blocking. */
 static void stream_sink(const struct imu_sample *s, uint32_t n)
 {
-    int64_t now = k_uptime_get();
-
     for (uint32_t i = 0; i < n; i++) {
         if ((stream_sample_ctr++ % stream_decim) != 0) {
             continue;
         }
-        if (stream_fill == 0) {
-            stream_first_ts = now;
+        if (sfifo_head - sfifo_tail >= SFIFO_N) {
+            stream_dropped++;        /* TX behind — drop, never block */
+            continue;
         }
-        memcpy(&stream_pkt[STREAM_HDR + stream_fill * 16], &s[i], 16);
-        if (++stream_fill >= stream_max) {
-            stream_send();
+        if (sfifo_head == sfifo_tail) {
+            sfifo_ts = k_uptime_get();
         }
+        sfifo[sfifo_head & (SFIFO_N - 1)] = s[i];
+        sfifo_head = sfifo_head + 1;
     }
+    k_sem_give(&tx_wake);
+}
 
-    /* Low-ODR flush so partial packets don't sit for seconds */
-    if (stream_fill > 0 && (now - stream_first_ts) > 100) {
-        stream_send();
+static void tx_thread(void *a, void *b, void *c)
+{
+    ARG_UNUSED(a); ARG_UNUSED(b); ARG_UNUSED(c);
+
+    while (1) {
+        k_sem_take(&tx_wake, K_MSEC(50));
+
+        /* Messages first — rare and high-value */
+        while (msgq_tail != msgq_head) {
+            const char *line = msgq[msgq_tail % MSGQ_N];
+
+            (void)tx_notify(BT_UUID_CATERPILLAR_MSG, line, strlen(line));
+            msgq_tail = msgq_tail + 1;
+        }
+
+        /* Stream packets: full ones eagerly, partials after 100 ms */
+        while (1) {
+            uint32_t avail = sfifo_head - sfifo_tail;
+
+            if (avail == 0) {
+                break;
+            }
+            if (avail < stream_max &&
+                (k_uptime_get() - sfifo_ts) < 100) {
+                break;               /* wait for a fuller packet */
+            }
+
+            uint8_t n = (uint8_t)MIN(avail, (uint32_t)stream_max);
+
+            for (uint8_t i = 0; i < n; i++) {
+                memcpy(&stream_pkt[STREAM_HDR + i * 16],
+                       (const void *)&sfifo[(sfifo_tail + i) & (SFIFO_N - 1)],
+                       16);
+            }
+            stream_pkt[0] = n;
+            stream_pkt[1] = stream_decim;
+            stream_pkt[2] = 0;
+            stream_pkt[3] = 0;
+            sys_put_le32(stream_dropped, &stream_pkt[4]);
+
+            if (!tx_notify(BT_UUID_CATERPILLAR_STREAM, stream_pkt,
+                           STREAM_HDR + n * 16)) {
+                stream_dropped += n;
+            }
+            sfifo_tail = sfifo_tail + n;
+            sfifo_ts = k_uptime_get();
+        }
     }
 }
+
+K_THREAD_DEFINE(ble_tx_tid, 2048, tx_thread, NULL, NULL, NULL, 9, 0, 0);
 
 static void stream_ccc_changed(const struct bt_gatt_attr *attr, uint16_t value)
 {
     ARG_UNUSED(attr);
 
     if (value == BT_GATT_CCC_NOTIFY) {
-        stream_fill = 0;
+        sfifo_tail = sfifo_head;
         stream_sample_ctr = 0;
         stream_dropped = 0;
         stream_max = STREAM_MAX_SAMPLES;
@@ -618,6 +705,34 @@ static void stream_ccc_changed(const struct bt_gatt_attr *attr, uint16_t value)
     } else {
         imu_pump_set_sink(NULL);
         LOG_INF("BLE: IMU stream OFF");
+    }
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Session connection parameters                                             */
+/* -------------------------------------------------------------------------- */
+
+static struct bt_conn *cur_conn;
+
+/* slow=true: 50 ms interval while a log session runs (frees radio air
+ * so flash writes get MPSL timeslots); slow=false: 7.5-15 ms for
+ * responsive control and dumps.
+ */
+static void session_conn_params(bool slow)
+{
+    if (cur_conn == NULL) {
+        return;
+    }
+
+    struct bt_le_conn_param param = slow
+        ? (struct bt_le_conn_param){ .interval_min = 32, .interval_max = 48,
+                                     .latency = 0, .timeout = 400 }
+        : (struct bt_le_conn_param){ .interval_min = 6, .interval_max = 12,
+                                     .latency = 0, .timeout = 400 };
+    int ret = bt_conn_le_param_update(cur_conn, &param);
+
+    if (ret && ret != -EALREADY) {
+        LOG_WRN("conn param update (%s): %d", slow ? "slow" : "fast", ret);
     }
 }
 
@@ -645,12 +760,19 @@ static ssize_t on_logctl_write(struct bt_conn *conn,
     switch (p[0]) {
     case LOGCTL_CMD_STOP:
         imu_log_stop();
+        session_conn_params(false);
         break;
     case LOGCTL_CMD_START: {
         uint8_t policy = (len >= 2) ? p[1] : IMU_LOG_POLICY_STOP;
         if (imu_log_start(policy) < 0) {
             return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
         }
+        /* Wide connection interval while logging: every radio event
+         * blocks an MPSL flash timeslot, and at high ODR the log
+         * writer needs that air time more than the (capped) preview
+         * does.  Restored to fast params on stop.
+         */
+        session_conn_params(true);
         break;
     }
     case LOGCTL_CMD_ERASE:
@@ -844,7 +966,7 @@ K_THREAD_DEFINE(dump_tid, 2048, dump_thread, NULL, NULL, NULL, 7, 0, 0);
 
 void ble_msg(const char *fmt, ...)
 {
-    char line[120];
+    char line[MSG_LEN];
     va_list ap;
 
     va_start(ap, fmt);
@@ -854,13 +976,22 @@ void ble_msg(const char *fmt, ...)
     if (n <= 0) {
         return;
     }
-    n = MIN(n, (int)sizeof(line) - 1);
 
-    /* Also mirror to the local log for wired debugging */
+    /* Mirror to the local log for wired debugging */
     LOG_WRN("%s", line);
 
-    (void)bt_gatt_notify_uuid(NULL, BT_UUID_CATERPILLAR_MSG,
-                              caterpillar_svc.attrs, line, n);
+    /* Enqueue for the TX thread — callers include the pump thread
+     * (holding the log mutex), so sending inline here is forbidden.
+     */
+    k_spinlock_key_t key = k_spin_lock(&msgq_lock);
+
+    if (msgq_head - msgq_tail < MSGQ_N) {
+        strncpy(msgq[msgq_head % MSGQ_N], line, MSG_LEN - 1);
+        msgq[msgq_head % MSGQ_N][MSG_LEN - 1] = '\0';
+        msgq_head = msgq_head + 1;
+    }
+    k_spin_unlock(&msgq_lock, key);
+    k_sem_give(&tx_wake);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -967,6 +1098,7 @@ static void connected(struct bt_conn *conn, uint8_t err)
     }
 
     LOG_INF("BLE connected");
+    cur_conn = conn;
 
     /* Request low-latency connection params (7.5 ms interval) */
     struct bt_le_conn_param param = {
@@ -988,6 +1120,7 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
     ARG_UNUSED(conn);
     LOG_INF("BLE disconnected (reason %u)", reason);
+    cur_conn = NULL;
 
     /* Stop per-connection data flows (CCC state is not bonded) and
      * close a running log session — a session ends at the stop click

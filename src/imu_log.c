@@ -70,8 +70,15 @@ BUILD_ASSERT(sizeof(struct dir_meta) == ENTRY_SIZE);
 #define REC_CAPACITY    (DATA_CAPACITY / REC_SIZE)
 #define DATA_BASE       (DIR_BASE + DIR_BYTES)
 
-#define ACCUM_BYTES     512   /* RRAMC write-buffer sized batches */
-#define DIR_REFRESH_RECS 512  /* persist rec_count every N records */
+/* Every flash op waits for an MPSL radio timeslot
+ * (SOC_FLASH_NRF_RADIO_SYNC_MPSL) — measured ~30 ms per call while
+ * BLE streams.  Writes therefore run in a dedicated writer thread fed
+ * from a big SRAM staging ring, in 4 KB batches so one timeslot wait
+ * amortizes over 256 records.  The pump-side append is a pure memcpy.
+ */
+#define STAGE_N          1536  /* staged records (24 KB, ~230 ms @6.66 kHz) */
+#define BATCH_RECS       256   /* records per flash_write (4 KB) */
+#define DIR_REFRESH_RECS 512   /* persist rec_count every N records */
 
 struct dir_entry {
     uint32_t magic;
@@ -100,9 +107,14 @@ static uint32_t cur_count;
 static uint32_t cur_slot;
 static uint32_t last_dir_refresh;
 
-static uint8_t  accum[ACCUM_BYTES];
-static uint32_t accum_fill;
-static uint32_t accum_rec_base;  /* absolute record index of accum[0] */
+/* SPSC staging ring: producer = pump (imu_log_append), consumer =
+ * writer thread.  Same-core, so volatile indices suffice.
+ */
+static struct imu_sample stage[STAGE_N];
+static volatile uint32_t stage_head, stage_tail;
+static uint32_t log_dropped;         /* staged ring full — samples lost */
+static struct imu_sample batch[BATCH_RECS];
+static K_SEM_DEFINE(writer_wake, 0, 1);
 
 /* ---- directory helpers --------------------------------------------------- */
 
@@ -204,17 +216,72 @@ static int phys_rw(uint32_t off, uint8_t *buf, uint32_t len, bool write)
         : flash_read(flash_dev, DATA_BASE + off, buf, len);
 }
 
-static void accum_flush(void)
+/* ---- writer thread ------------------------------------------------------- */
+
+/* Drain up to BATCH_RECS staged records into flash as ONE write call
+ * (one radio-timeslot wait).  Runs with log_lock held.
+ */
+static void writer_drain_batch(void)
 {
-    if (accum_fill == 0) {
+    uint32_t avail = stage_head - stage_tail;
+    uint32_t n = MIN(avail, (uint32_t)BATCH_RECS);
+
+    if (n == 0) {
         return;
     }
-    uint32_t off = (accum_rec_base % REC_CAPACITY) * REC_SIZE;
-    int ret = phys_rw(off, accum, accum_fill, true);
-    if (ret < 0) {
-        LOG_ERR("log flash write @%u: %d", off, ret);
+
+    /* Clamp to the flash-ring wrap so the write stays contiguous */
+    uint32_t ring_pos = total_abs % REC_CAPACITY;
+
+    n = MIN(n, REC_CAPACITY - ring_pos);
+
+    for (uint32_t i = 0; i < n; i++) {
+        batch[i] = stage[(stage_tail + i) % STAGE_N];
     }
-    accum_fill = 0;
+
+    int ret = phys_rw(ring_pos * REC_SIZE, (uint8_t *)batch,
+                      n * REC_SIZE, true);
+    if (ret < 0) {
+        LOG_ERR("log flash write @%u: %d", ring_pos * REC_SIZE, ret);
+    }
+
+    stage_tail = stage_tail + n;
+    total_abs += n;
+    cur_count += n;
+
+    if (cur_count - last_dir_refresh >= DIR_REFRESH_RECS) {
+        dir_refresh_current(false);
+        invalidate_consumed();   /* circular may eat old sessions */
+    }
+}
+
+static void writer_thread(void *a, void *b, void *c)
+{
+    ARG_UNUSED(a); ARG_UNUSED(b); ARG_UNUSED(c);
+
+    while (1) {
+        k_sem_take(&writer_wake, K_MSEC(20));
+
+        while (active && stage_head != stage_tail) {
+            k_mutex_lock(&log_lock, K_FOREVER);
+            writer_drain_batch();
+            k_mutex_unlock(&log_lock);
+        }
+    }
+}
+
+K_THREAD_DEFINE(imu_log_writer_tid, 2048, writer_thread,
+                NULL, NULL, NULL, 6, 0, 0);
+
+/* Block until the writer has persisted everything staged so far
+ * (bounded); used by stop so directory counts are final.
+ */
+static void writer_flush(void)
+{
+    for (int i = 0; i < 200 && stage_head != stage_tail; i++) {
+        k_sem_give(&writer_wake);
+        k_msleep(5);
+    }
 }
 
 /* ---- public API ---------------------------------------------------------- */
@@ -294,7 +361,8 @@ int imu_log_start(uint8_t policy)
     cur_start = total_abs;
     cur_count = 0;
     last_dir_refresh = 0;
-    accum_fill = 0;
+    stage_tail = stage_head;     /* discard any stale staged records */
+    log_dropped = 0;
 
     struct dir_entry e = {
         .magic = ENTRY_MAGIC,
@@ -327,12 +395,19 @@ int imu_log_start(uint8_t policy)
 
 void imu_log_stop(void)
 {
+    if (!active) {
+        return;
+    }
+
+    /* Let the writer persist everything staged, then finalize */
+    writer_flush();
+
     k_mutex_lock(&log_lock, K_FOREVER);
     if (active) {
-        accum_flush();
-        dir_refresh_current(true);
         active = false;
-        LOG_INF("IMU log session %u stop: %u records", cur_seq, cur_count);
+        dir_refresh_current(true);
+        LOG_INF("IMU log session %u stop: %u records (%u dropped)",
+                cur_seq, cur_count, log_dropped);
     }
     k_mutex_unlock(&log_lock);
 }
@@ -361,6 +436,7 @@ uint32_t imu_log_bytes_stored(void)
 }
 
 uint32_t imu_log_records_total(void) { return cur_count; }
+uint32_t imu_log_write_dropped(void) { return log_dropped; }
 
 void imu_log_append(const struct imu_sample *s, uint32_t n)
 {
@@ -368,28 +444,18 @@ void imu_log_append(const struct imu_sample *s, uint32_t n)
         return;
     }
 
-    k_mutex_lock(&log_lock, K_FOREVER);
+    /* Pump context: stage only — no mutex, no flash, no blocking.
+     * The writer thread persists in radio-timeslot-friendly batches.
+     */
     for (uint32_t i = 0; i < n; i++) {
-        if (accum_fill == 0) {
-            accum_rec_base = total_abs;
+        if (stage_head - stage_tail >= STAGE_N) {
+            log_dropped++;           /* flash can't keep up — counted */
+            continue;
         }
-        memcpy(&accum[accum_fill], &s[i], REC_SIZE);
-        accum_fill += REC_SIZE;
-        total_abs++;
-        cur_count++;
-
-        /* Flush on a full batch or at the physical wrap point */
-        if (accum_fill == ACCUM_BYTES ||
-            (total_abs % REC_CAPACITY) == 0) {
-            accum_flush();
-        }
-
-        if (cur_count - last_dir_refresh >= DIR_REFRESH_RECS) {
-            dir_refresh_current(false);
-            invalidate_consumed();   /* circular may eat old sessions */
-        }
+        stage[stage_head % STAGE_N] = s[i];
+        stage_head = stage_head + 1;
     }
-    k_mutex_unlock(&log_lock);
+    k_sem_give(&writer_wake);
 }
 
 int imu_log_session_list(struct imu_log_session *out, int max)
@@ -398,7 +464,6 @@ int imu_log_session_list(struct imu_log_session *out, int max)
     int n = 0;
 
     k_mutex_lock(&log_lock, K_FOREVER);
-    accum_flush();
     uint32_t floor = ring_floor();
 
     for (uint32_t i = 0; i < IMU_LOG_MAX_SESSIONS; i++) {
@@ -450,7 +515,6 @@ int imu_log_read_session(uint32_t seq, uint32_t offset,
     uint32_t done = 0;
 
     k_mutex_lock(&log_lock, K_FOREVER);
-    accum_flush();
 
     struct dir_entry e;
     bool found = false;

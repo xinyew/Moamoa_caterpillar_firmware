@@ -136,6 +136,15 @@ int main(void)
             last_overrun = overrun;
         }
 
+        static uint32_t last_wdrop;
+        uint32_t wdrop = imu_log_write_dropped();
+
+        if (wdrop != last_wdrop && wdrop > last_wdrop) {
+            ble_msg("log write backlog: %u samples lost (total %u)",
+                    wdrop - last_wdrop, wdrop);
+        }
+        last_wdrop = wdrop;
+
         if (now - last_warn >= 5000) {
             if (!alive) {
                 last_warn = now;

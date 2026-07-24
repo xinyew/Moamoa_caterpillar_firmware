@@ -19,14 +19,26 @@ app pump thread (4 ms poll)
   content above half the preview rate aliases in the live plot.  The
   full-rate log/dump is the only spectrally valid record.
 
-## Rate envelope (measured)
+## Rate envelope (measured, v1.3.7 writer-thread architecture)
 
-| ODR | Stream | Logging | Ring time in 679 KB log |
+FLPR-ring overruns are **eliminated at every ODR** (pump does memcpy
+only; stream TX and flash writes run in their own threads).  The one
+remaining bottleneck is flash bandwidth while BLE-connected: every
+flash op waits for an MPSL radio timeslot, sustaining ~90–95 KiB/s
+against the 104 KiB/s demand of 6.66 kHz.  Loss, when it occurs, is
+counted (`log write backlog` on 0xFFEC) and marked by seq16 gaps.
+
+| ODR | Stream | Logging while connected | Ring time in 679 KB log |
 |---|---|---|---|
-| ≤833 Hz | full rate | clean | ≥52 s |
-| 1660 Hz | ×2 decim | clean (verified 0 overruns) | ~26 s |
-| 3330 Hz | ×3 decim | clean | ~13 s |
-| 6660 Hz | ×6 decim | **expect ~5–8 % overrun loss while BLE-connected** (counted, positions marked by seq16 gaps) | ~6.5 s |
+| ≤1660 Hz | full/×2 | clean (0 loss) | ≥26 s |
+| 3330 Hz | ×3 auto | ~0–2 % (0 with a capped preview) | ~13 s |
+| 6660 Hz | capped preview | ~10 % backlog loss | ~6.5 s |
+| 6660 Hz | auto preview | ~20 % backlog loss | ~6.5 s |
+
+The device widens the connection interval to ~50 ms during a session
+(restored on stop) to free radio air for flash timeslots.  NOTE:
+raising BT TX buffer counts makes this WORSE (longer radio events);
+see prj.conf.
 
 ## Flash layout (absolute RRAM offsets)
 

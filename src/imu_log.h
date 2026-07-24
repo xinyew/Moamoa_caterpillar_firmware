@@ -53,6 +53,8 @@ uint8_t  imu_log_policy(void);
 uint32_t imu_log_capacity_bytes(void);
 uint32_t imu_log_bytes_stored(void);     /* current/last session bytes */
 uint32_t imu_log_records_total(void);    /* current/last session records */
+uint32_t imu_log_write_dropped(void);    /* staged samples lost: flash
+                                          * couldn't keep up (counted) */
 
 /* Append records (pump thread only). */
 void imu_log_append(const struct imu_sample *s, uint32_t n);
