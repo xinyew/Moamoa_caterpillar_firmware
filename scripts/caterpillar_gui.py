@@ -232,27 +232,55 @@ class BleWorker:
         return P.decode_sessions(bytes(data))
 
     async def dump(self, session: int, total: int) -> bytes | None:
-        """Fetch `total` bytes of one session's records, reassembled."""
+        """Fetch `total` bytes of one session's records, reassembled.
+
+        Self-healing: BLE notification streams can stall (congestion,
+        Windows stack hiccups, device-side abort) — if no chunk arrives
+        for a few seconds, the request is re-issued from the highest
+        offset received so far.
+        """
         self._dump_buf = bytearray(total)
         self._dump_expected = total
-        self._dump_received = 0
+        self._dump_max_end = 0
+        self._dump_last_rx = time.monotonic()
         self._dump_done = asyncio.Event()
         t0 = time.monotonic()
+        resumes = 0
 
         await self.client.write_gatt_char(
             P.UUID_DUMP, P.encode_dump_req(session, 0, total),
             response=True)
-        try:
-            await asyncio.wait_for(self._dump_done.wait(),
-                                   timeout=60 + total / 4096)
-        except asyncio.TimeoutError:
-            self.ui.log(f"Dump timed out at "
-                        f"{self._dump_received}/{total} B")
-            return None
+
+        while not self._dump_done.is_set():
+            try:
+                await asyncio.wait_for(self._dump_done.wait(), timeout=1.0)
+                break
+            except asyncio.TimeoutError:
+                pass
+            if time.monotonic() - self._dump_last_rx < 5.0:
+                continue
+            if resumes >= 20:
+                self.ui.log(f"Dump failed after {resumes} resume attempts "
+                            f"({self._dump_max_end}/{total} B)")
+                return None
+            resumes += 1
+            frm = self._dump_max_end
+            self.ui.log(f"Dump stalled — resuming at {frm}/{total} B "
+                        f"(attempt {resumes})")
+            self._dump_last_rx = time.monotonic()
+            try:
+                await self.client.write_gatt_char(
+                    P.UUID_DUMP,
+                    P.encode_dump_req(session, frm, total - frm),
+                    response=True)
+            except Exception as e:
+                self.ui.log(f"Dump resume write failed: {e}")
+                return None
 
         dt = time.monotonic() - t0
+        note = f", {resumes} resume(s)" if resumes else ""
         self.ui.log(f"Dump complete: {total} B in {dt:.1f} s "
-                    f"({total / dt / 1024:.1f} KiB/s)")
+                    f"({total / dt / 1024:.1f} KiB/s{note})")
         return bytes(self._dump_buf)
 
     def _on_dump_chunk(self, _char, data: bytearray):
@@ -261,9 +289,11 @@ class BleWorker:
         c = P.decode_dump_chunk(bytes(data))
         end = min(c.offset + len(c.data), self._dump_expected)
         self._dump_buf[c.offset:end] = c.data[:end - c.offset]
-        self._dump_received += len(c.data)
-        self.ui.on_dump_progress(self._dump_received, self._dump_expected)
-        if c.last or self._dump_received >= self._dump_expected:
+        self._dump_max_end = max(self._dump_max_end, end)
+        self._dump_last_rx = time.monotonic()
+        self.ui.on_dump_progress(self._dump_max_end, self._dump_expected)
+        if (c.last and end >= self._dump_expected) or \
+                self._dump_max_end >= self._dump_expected:
             self._dump_done.set()
 
 

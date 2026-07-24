@@ -716,10 +716,23 @@ static ssize_t on_dir_read(struct bt_conn *conn,
 /* -------------------------------------------------------------------------- */
 
 #define DUMP_CHUNK_DATA  232
+#define DUMP_CREDITS     2
 
 static K_SEM_DEFINE(dump_sem, 0, 1);
+/* Flow control: max DUMP_CREDITS notifications in flight.  Sending
+ * unpaced exhausts the host TX contexts and bt_gatt_notify then
+ * BLOCKS FOREVER waiting for one (observed on hardware: dump wedged
+ * mid-transfer, deaf to new requests, link eventually dropped).
+ */
+static K_SEM_DEFINE(dump_credit_sem, 0, DUMP_CREDITS);
 static uint32_t dump_req_session, dump_req_off, dump_req_len;
 static volatile bool dump_abort;
+
+static void dump_sent_cb(struct bt_conn *conn, void *user_data)
+{
+    ARG_UNUSED(conn); ARG_UNUSED(user_data);
+    k_sem_give(&dump_credit_sem);
+}
 
 static ssize_t on_dump_write(struct bt_conn *conn,
                              const struct bt_gatt_attr *attr,
@@ -755,11 +768,24 @@ static void dump_thread(void *a, void *b, void *c)
         uint32_t off = dump_req_off;
         uint32_t remaining = dump_req_len;
 
+        /* Fresh credits per request (stale sent-callbacks from an
+         * aborted dump can only saturate the cap, which is harmless).
+         */
+        while (k_sem_take(&dump_credit_sem, K_NO_WAIT) == 0) {
+        }
+        for (int i = 0; i < DUMP_CREDITS; i++) {
+            k_sem_give(&dump_credit_sem);
+        }
+
         while (remaining > 0 && !dump_abort) {
             uint32_t want = MIN(remaining, (uint32_t)DUMP_CHUNK_DATA);
             int n = imu_log_read_session(session, off, &chunk[8], want);
 
             if (n < 0) {
+                /* never silently: this was the invisible failure mode
+                 * behind dumps freezing at a fixed percentage
+                 */
+                ble_msg("dump read error %d at offset %u", n, off);
                 break;
             }
             bool last = (n < (int)want) || ((uint32_t)n == remaining);
@@ -769,18 +795,39 @@ static void dump_thread(void *a, void *b, void *c)
             chunk[6] = last ? 1 : 0;
             chunk[7] = 0;
 
+            /* Wait for an in-flight slot; a long wait means the TX
+             * path is wedged — abort and let the host resume.
+             */
+            if (k_sem_take(&dump_credit_sem, K_SECONDS(3)) != 0) {
+                ble_msg("dump stalled at offset %u — TX jam, resume",
+                        off);
+                break;
+            }
+
+            struct bt_gatt_notify_params np = {
+                .uuid = BT_UUID_CATERPILLAR_DUMP,
+                .attr = caterpillar_svc.attrs,
+                .data = chunk,
+                .len = (uint16_t)(8 + n),
+                .func = dump_sent_cb,
+            };
             int ret;
             int tries = 0;
             do {
-                ret = bt_gatt_notify_uuid(NULL, BT_UUID_CATERPILLAR_DUMP,
-                                          caterpillar_svc.attrs, chunk,
-                                          8 + n);
-                if (ret == -ENOMEM) {
-                    k_msleep(2);     /* notify buffers full — back off */
+                ret = bt_gatt_notify_cb(NULL, &np);
+                if (ret == -ENOMEM || ret == -EAGAIN || ret == -ENOBUFS) {
+                    k_msleep(2);
+                } else {
+                    break;
                 }
-            } while (ret == -ENOMEM && ++tries < 2000 && !dump_abort);
+            } while (++tries < 500 && !dump_abort);
 
-            if (ret < 0 || last) {
+            if (ret < 0) {
+                k_sem_give(&dump_credit_sem);   /* never sent */
+                ble_msg("dump aborted at offset %u (err %d)", off, ret);
+                break;
+            }
+            if (last) {
                 break;
             }
             off += n;
