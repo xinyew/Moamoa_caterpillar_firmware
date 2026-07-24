@@ -10,6 +10,7 @@ Run from anywhere:  python scripts/generate_settings.py
 
 from __future__ import annotations
 
+import hashlib
 import sys
 from pathlib import Path
 
@@ -20,7 +21,9 @@ HDR = "AUTO-GENERATED from settings.yml — do not edit; run scripts/generate_se
 
 
 def main() -> int:
-    cfg = yaml.safe_load((ROOT / "settings.yml").read_text(encoding="utf-8"))
+    yml_bytes = (ROOT / "settings.yml").read_bytes()
+    yml_sha1 = hashlib.sha1(yml_bytes).hexdigest()
+    cfg = yaml.safe_load(yml_bytes.decode("utf-8"))
     settings = cfg["settings"]
 
     for s in settings:
@@ -36,6 +39,7 @@ def main() -> int:
     # ---- firmware header -------------------------------------------------
     lines = [
         f"/* {HDR} */",
+        f"/* settings.yml sha1: {yml_sha1} */",
         "#ifndef SETTINGS_GEN_H",
         "#define SETTINGS_GEN_H",
         "",

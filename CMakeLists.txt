@@ -45,6 +45,21 @@ generate_inc_file_for_target(app ${FLPR_STAGED} ${FLPR_GEN_DIR}/flpr_image.inc)
 add_dependencies(app flpr_build)
 target_include_directories(app PRIVATE ${FLPR_GEN_DIR})
 
+# Guard against settings drift: settings_gen.h (and protocol_limits.py,
+# docs/settings.md) are generated MANUALLY from settings.yml and
+# committed — the build itself has no pyyaml dependency.  This check
+# makes forgetting to regenerate a hard error instead of silent drift.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+             ${CMAKE_CURRENT_SOURCE_DIR}/settings.yml)
+file(SHA1 ${CMAKE_CURRENT_SOURCE_DIR}/settings.yml SETTINGS_YML_SHA1)
+file(READ ${CMAKE_CURRENT_SOURCE_DIR}/src/settings_gen.h SETTINGS_GEN_CONTENT)
+string(FIND "${SETTINGS_GEN_CONTENT}" "${SETTINGS_YML_SHA1}" SETTINGS_HASH_POS)
+if(SETTINGS_HASH_POS EQUAL -1)
+    message(FATAL_ERROR
+        "settings.yml changed but generated files are stale.\n"
+        "Run:  python scripts/generate_settings.py")
+endif()
+
 target_sources(app PRIVATE
     src/main.c
     src/flpr_launch.c
