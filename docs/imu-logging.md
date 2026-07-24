@@ -10,6 +10,11 @@ app pump thread (4 ms poll)
     └─> BLE live stream    (decimated preview, 0xFFE9)
 ```
 
+- **Sampling is on-demand** (v1.4.0): the sensor is powered down unless
+  a log session runs or a live stream is subscribed, waking within
+  ~100 ms of either.  Config written while idle is remembered
+  (settings) and applied on the next enable; the 0xFFE8 *read* shows
+  the *applied* state, so content reads 0 while idle.
 - The FLPR samples at the configured ODR (12.5 Hz–6.66 kHz) and never
   blocks: if the shared ring is full it drops the sample and counts it
   (`overruns` in status/config reads, announced on 0xFFEC).
