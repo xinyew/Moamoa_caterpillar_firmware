@@ -93,7 +93,7 @@ struct imu_shared {
 #define IMU_SHARED ((struct imu_shared *)IMU_SHARED_ADDR)
 
 /* Boot default until the GUI configures a session */
-#define IMU_CFG_DEFAULT_ODR       IMU_ODR_104HZ
+#define IMU_CFG_DEFAULT_ODR       IMU_ODR_833HZ
 #define IMU_CFG_DEFAULT_CONTENT   (IMU_CONTENT_ACCEL | IMU_CONTENT_GYRO)
 #define IMU_CFG_DEFAULT_ACCEL_FS  0   /* ±2 g */
 #define IMU_CFG_DEFAULT_GYRO_FS   0   /* ±250 dps */

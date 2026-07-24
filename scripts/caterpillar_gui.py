@@ -283,7 +283,7 @@ class MainWindow(QMainWindow):
         self._gfs = 0
         self._dump_data = None       # (t, acc_g, gyr_dps, title)
         self._dump_win: DumpPlotWindow | None = None
-        self._odr_hz = 104.0         # updated when config is applied
+        self._odr_hz = 833.0         # updated when config is applied
         self._seq_last = None        # stream seq16 unwrap state
         self._seq_abs = 0
 
@@ -371,7 +371,7 @@ class MainWindow(QMainWindow):
         self.cmb_odr = QComboBox()
         for code, hz in P.ODR_HZ.items():
             self.cmb_odr.addItem(f"{hz} Hz", code)
-        self.cmb_odr.setCurrentIndex(3)  # 104 Hz boot default
+        self.cmb_odr.setCurrentIndex(6)  # 833 Hz boot default
         self.cmb_content = QComboBox()
         self.cmb_content.addItem("accel + gyro",
                                  P.CONTENT_ACCEL | P.CONTENT_GYRO)
