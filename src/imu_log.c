@@ -13,14 +13,20 @@
  *                      overwrites this with image bytes; on the first
  *                      boot of ANY new/reflashed firmware the stamp
  *                      mismatches and every session slot is wiped.
- *   0xBA220..0x163F80  record ring, part A (last 128 B reserved so log
- *                      data can never look like an MCUboot swap trailer)
- *   0x165000..0x17D000 record ring, part B (former FLPR code region)
+ *   0xBA220..0x163F80  record ring (last 128 B of the slot reserved so
+ *                      log data can never look like an MCUboot trailer)
  *
- * Records live in ONE shared ring addressed by an absolute record
- * counter (total_abs); a session is just a [start, start+count) range
- * of that counter, remembered in its directory entry.  RRAM needs no
- * erase, so entries are freely overwritten in place.
+ * The ex-FLPR region at 0x165000 is deliberately NOT used: the app
+ * core's flash device (cpuapp_rram) ends at 0x165000, so every access
+ * beyond it fails with -EINVAL — writes there were silently lost and
+ * dump reads wedged at the boundary (verified on hardware, "stuck at
+ * 78-83%").  Extending the device range would change the partition
+ * map and break OTA compatibility; 679 KB in-range is the honest size.
+ *
+ * Records live in ONE ring addressed by an absolute record counter
+ * (total_abs); a session is just a [start, start+count) range of that
+ * counter, remembered in its directory entry.  RRAM needs no erase,
+ * so entries are freely overwritten in place.
  */
 
 #include "imu_log.h"
@@ -38,8 +44,6 @@ LOG_MODULE_REGISTER(imu_log, LOG_LEVEL_INF);
 
 #define REGION_A_BASE   0xB9000UL
 #define REGION_A_SIZE   0xAB000UL
-#define REGION_B_BASE   0x165000UL
-#define REGION_B_SIZE   0x18000UL
 #define TRAILER_RESERVE 128UL
 #define HDR_RESERVE     0x1000UL       /* MCUboot's header erase block */
 
@@ -50,7 +54,7 @@ LOG_MODULE_REGISTER(imu_log, LOG_LEVEL_INF);
 #define DIR_BYTES       ((IMU_LOG_MAX_SESSIONS + 1) * ENTRY_SIZE)
 
 #define META_MAGIC      0x474F4C43UL   /* "CLOG" */
-#define META_LAYOUT     1
+#define META_LAYOUT     2              /* v2: single-region ring */
 
 struct dir_meta {
     uint32_t magic;
@@ -61,10 +65,10 @@ struct dir_meta {
 BUILD_ASSERT(sizeof(struct dir_meta) == ENTRY_SIZE);
 
 #define REC_SIZE        ((uint32_t)sizeof(struct imu_sample))   /* 16 */
-#define A_DATA_BYTES    (REGION_A_SIZE - HDR_RESERVE - DIR_BYTES - \
+#define DATA_CAPACITY   (REGION_A_SIZE - HDR_RESERVE - DIR_BYTES - \
                          TRAILER_RESERVE)
-#define DATA_CAPACITY   (A_DATA_BYTES + REGION_B_SIZE)
 #define REC_CAPACITY    (DATA_CAPACITY / REC_SIZE)
+#define DATA_BASE       (DIR_BASE + DIR_BYTES)
 
 #define ACCUM_BYTES     512   /* RRAMC write-buffer sized batches */
 #define DIR_REFRESH_RECS 512  /* persist rec_count every N records */
@@ -193,29 +197,11 @@ static void dir_refresh_current(bool closing)
 
 /* ---- ring data helpers (byte offsets inside the record ring) ------------- */
 
-static uint32_t phys_addr(uint32_t off)
-{
-    return (off < A_DATA_BYTES)
-        ? DIR_BASE + DIR_BYTES + off
-        : REGION_B_BASE + (off - A_DATA_BYTES);
-}
-
 static int phys_rw(uint32_t off, uint8_t *buf, uint32_t len, bool write)
 {
-    while (len > 0) {
-        uint32_t span = len;
-        if (off < A_DATA_BYTES && off + span > A_DATA_BYTES) {
-            span = A_DATA_BYTES - off;
-        }
-        int ret = write
-            ? flash_write(flash_dev, phys_addr(off), buf, span)
-            : flash_read(flash_dev, phys_addr(off), buf, span);
-        if (ret < 0) {
-            return ret;
-        }
-        off += span; buf += span; len -= span;
-    }
-    return 0;
+    return write
+        ? flash_write(flash_dev, DATA_BASE + off, buf, len)
+        : flash_read(flash_dev, DATA_BASE + off, buf, len);
 }
 
 static void accum_flush(void)

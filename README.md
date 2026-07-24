@@ -18,13 +18,13 @@ both cores.
 | 3 | IMU | ASM330LHHTR | SPI (FLPR core) | 6-axis accel/gyro, DRDY-paced, ODR/FS runtime-configurable |
 | 4 | BLE | nRF54L15 radio | — | Control surface, live IMU stream, log dump, OTA DFU |
 | 5 | Status LED | Blue LED (P0.01) | GPIO | Heartbeat: board-alive indicator |
-| 6 | IMU flash log | on-chip RRAM | — | 798 KB full-rate sample log (dual-use with OTA secondary slot) |
+| 6 | IMU flash log | on-chip RRAM | — | 679 KB full-rate sample log (dual-use with OTA secondary slot) |
 
 ## IMU data path (firmware ≥ v1.2.x)
 
 ```
 ASM330 --SPI/DRDY--> FLPR core --2048-record ring @0x20036000--> app pump thread
-                                                                  ├─> RRAM log (798 KB, full rate)
+                                                                  ├─> RRAM log (679 KB, full rate)
                                                                   └─> BLE stream 0xFFE9 (decimated ~20 KiB/s)
 ```
 
