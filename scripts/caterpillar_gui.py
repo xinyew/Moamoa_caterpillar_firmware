@@ -36,6 +36,45 @@ import protocol as P
 
 PLOT_WINDOW_S = 5.0
 PLOT_MAX_POINTS = 20000
+SMOOTH_LAG_S = 0.15     # display latency absorbing per-conn-event bursts
+
+
+class StreamBuffer:
+    """Preallocated sample store for the live plots.
+
+    Appends are O(new samples) — no reallocation per packet (the old
+    np.concatenate churn moved up to ~500 KB per notification on the
+    thread that also services BLE I/O).  The newest samples are always
+    readable as contiguous views; compaction copies the newest `cap`
+    samples once per `cap` appended (amortized O(1)/sample).
+    """
+
+    def __init__(self, cap: int = PLOT_MAX_POINTS):
+        self.cap = cap
+        self.t = np.zeros(2 * cap)
+        self.acc = np.zeros((2 * cap, 3), np.float32)
+        self.gyr = np.zeros((2 * cap, 3), np.float32)
+        self.len = 0
+
+    def clear(self):
+        self.len = 0
+
+    def append(self, t: np.ndarray, acc: np.ndarray, gyr: np.ndarray):
+        n = len(t)
+        if n >= self.cap:                      # absurd burst: keep newest
+            t, acc, gyr = t[-self.cap:], acc[-self.cap:], gyr[-self.cap:]
+            n = self.cap
+        if self.len + n > 2 * self.cap:        # compact to newest cap
+            keep = self.cap
+            self.t[:keep] = self.t[self.len - keep:self.len]
+            self.acc[:keep] = self.acc[self.len - keep:self.len]
+            self.gyr[:keep] = self.gyr[self.len - keep:self.len]
+            self.len = keep
+        sl = slice(self.len, self.len + n)
+        self.t[sl] = t
+        self.acc[sl] = acc
+        self.gyr[sl] = gyr
+        self.len += n
 
 
 class DumpPlotWindow(QWidget):
@@ -341,13 +380,17 @@ class MainWindow(QMainWindow):
         self.ble = BleWorker(self)
 
         # Stream plot state
-        self._t = np.zeros(0)
-        self._acc = np.zeros((0, 3))
-        self._gyr = np.zeros((0, 3))
+        self._sbuf = StreamBuffer()
         self._stream_n = 0
         self._stream_t0 = None
         self._stream_rate = 0.0
         self._stream_dropped = 0
+        self._rate_win: list[tuple[float, int]] = []  # (wall, n) per pkt
+        self._disp_edge = None       # smoothed right edge (sensor time)
+        self._frame_wall = None
+        self._decim = 1              # stream decimation (from packets)
+        self._gap_est = 0.05         # decaying max inter-packet gap [s]
+        self._last_pkt_wall = None
         self._afs = 0
         self._gfs = 0
         self._dump_data = None       # (t, acc_g, gyr_dps, title)
@@ -599,6 +642,14 @@ class MainWindow(QMainWindow):
             self.plot_gyr.plot(pen=pg.mkPen(c, width=1), name=n)
             for c, n in (("#e6194b", "gx"), ("#3cb44b", "gy"),
                          ("#4363d8", "gz"))]
+        # Live-view rendering: peak-mode downsampling keeps the
+        # vibration envelope while capping drawn points; the x-axis is
+        # driven by _update_plots (smoothed edge), gyro linked to accel.
+        for p in (self.plot_acc, self.plot_gyr):
+            p.setDownsampling(auto=True, mode="peak")
+            p.setClipToView(True)
+            p.setMouseEnabled(x=False, y=False)
+        self.plot_gyr.setXLink(self.plot_acc)
         right.addWidget(self.plot_acc, 2)
         right.addWidget(self.plot_gyr, 2)
 
@@ -798,12 +849,15 @@ class MainWindow(QMainWindow):
     async def _start_session(self):
         """One click = flash logging + live stream together."""
         await self.ble.log_cmd(P.LOG_CMD_START, P.LOG_POLICY_CIRCULAR)
-        self._t = np.zeros(0)
-        self._acc = np.zeros((0, 3))
-        self._gyr = np.zeros((0, 3))
+        self._sbuf.clear()
         self._stream_n = 0
         self._stream_t0 = time.monotonic()
         self._stream_dropped = 0
+        self._rate_win.clear()
+        self._disp_edge = None
+        self._frame_wall = None
+        self._gap_est = 0.05
+        self._last_pkt_wall = None
         self._seq_last = None
         self._seq_abs = 0
         await self.ble.stream_start()
@@ -864,15 +918,13 @@ class MainWindow(QMainWindow):
             self.log(f"Session command failed: {e}")
 
     def on_stream_pkt(self, _char, data: bytearray):
-        try:
-            pkt = P.decode_stream_packet(bytes(data))
-        except Exception:
+        # Hot path (runs on the qasync loop between BLE I/O): parse in
+        # place — no bytes() copy — and do only O(packet) work here.
+        n = data[0]
+        if n == 0 or len(data) < 8 + n * P.RECORD_SIZE:
             return
-        recs = np.frombuffer(pkt.samples, dtype=np.int16)
-        n = len(recs) // 8
-        if n == 0:
-            return
-        recs = recs.reshape(n, 8)
+        recs = np.frombuffer(data, dtype=np.int16, count=n * 8,
+                             offset=8).reshape(n, 8)
 
         acc = recs[:, 0:3].astype(np.float32) * \
             (P.ACCEL_MG_PER_LSB[self._afs] / 1000.0)
@@ -888,32 +940,83 @@ class MainWindow(QMainWindow):
         seq = recs[:, 7].astype(np.int64) & 0xFFFF
         if self._seq_last is None:
             self._seq_last = int(seq[0])
-        deltas = np.diff(np.concatenate(([self._seq_last], seq))) % 65536
+        deltas = np.diff(seq, prepend=self._seq_last) % 65536
         abs_seq = self._seq_abs + np.cumsum(deltas)
         self._seq_last = int(seq[-1])
         self._seq_abs = int(abs_seq[-1])
-        t = abs_seq / self._odr_hz
 
-        self._t = np.concatenate([self._t, t])[-PLOT_MAX_POINTS:]
-        self._acc = np.concatenate([self._acc, acc])[-PLOT_MAX_POINTS:]
-        self._gyr = np.concatenate([self._gyr, gyr])[-PLOT_MAX_POINTS:]
+        self._sbuf.append(abs_seq / self._odr_hz, acc, gyr)
         self._stream_n += n
-        self._stream_dropped = pkt.dropped
+        now = time.monotonic()
+        if self._last_pkt_wall is not None:
+            self._gap_est = max(now - self._last_pkt_wall,
+                                self._gap_est * 0.98)
+        self._last_pkt_wall = now
+        self._rate_win.append((now, n))
+        self._decim = data[1] or 1
+        (self._stream_dropped,) = struct.unpack_from("<I", data, 4)
 
     def _update_plots(self):
-        if len(self._t) == 0:
+        buf = self._sbuf
+        if buf.len == 0:
             return
-        tmax = self._t[-1]
-        mask = self._t >= tmax - PLOT_WINDOW_S
-        t = self._t[mask]
-        for i, c in enumerate(self.curves_acc):
-            c.setData(t, self._acc[mask, i])
-        for i, c in enumerate(self.curves_gyr):
-            c.setData(t, self._gyr[mask, i])
-        el = time.monotonic() - self._stream_t0
-        rate = self._stream_n / el if el > 0 else 0
+        t_all = buf.t[:buf.len]
+        t_last = t_all[-1]
+
+        # Smooth scrolling: notifications land in bursts per connection
+        # event (~30-50 ms, wider while logging), so drawing straight
+        # to the newest sample makes the trace lurch.  Instead the
+        # right edge advances at wall-clock pace and is gently pulled
+        # toward (newest - lag).  The lag adapts to the observed
+        # inter-packet cadence, so a widened connection interval just
+        # means slightly more display latency, not stalling.
+        now = time.monotonic()
+        dt = (now - self._frame_wall) if self._frame_wall else 0.033
+        self._frame_wall = now
+        # Count an in-progress silence toward the gap estimate too, so
+        # the lag grows *during* a lull instead of only after it ends.
+        if self._last_pkt_wall is not None:
+            self._gap_est = max(self._gap_est, now - self._last_pkt_wall)
+        lag = min(max(1.5 * self._gap_est, SMOOTH_LAG_S), 0.6)
+        edge = self._disp_edge
+        if edge is None or abs(t_last - edge) > 2.0:
+            edge = t_last                      # (re)acquire after stall
+        else:
+            edge += dt + 2.0 * dt * ((t_last - lag) - edge)
+            edge = min(edge, t_last)           # never show the future
+        self._disp_edge = edge
+
+        # t is monotonic — slice with searchsorted views, no mask copy
+        hi = int(np.searchsorted(t_all, edge, "right"))
+        lo = int(np.searchsorted(t_all, edge - PLOT_WINDOW_S, "left"))
+        t = t_all[lo:hi]
+
+        # Where samples were really lost (seq16 gaps), break the line
+        # instead of drawing a misleading bridge across the hole.
+        gaps = np.flatnonzero(np.diff(t) > 2.5 * self._decim
+                              / self._odr_hz) + 1 if len(t) > 1 else \
+            np.empty(0, np.int64)
+        if gaps.size:
+            t_p = np.insert(t, gaps, np.nan)
+            for i, c in enumerate(self.curves_acc):
+                c.setData(t_p, np.insert(buf.acc[lo:hi, i], gaps, np.nan),
+                          connect="finite")
+            for i, c in enumerate(self.curves_gyr):
+                c.setData(t_p, np.insert(buf.gyr[lo:hi, i], gaps, np.nan),
+                          connect="finite")
+        else:
+            for i, c in enumerate(self.curves_acc):
+                c.setData(t, buf.acc[lo:hi, i], skipFiniteCheck=True)
+            for i, c in enumerate(self.curves_gyr):
+                c.setData(t, buf.gyr[lo:hi, i], skipFiniteCheck=True)
+        self.plot_acc.setXRange(edge - PLOT_WINDOW_S, edge, padding=0)
+
+        # Windowed (2 s) rate: shows what the link does *now*, not the
+        # lifetime average.
+        self._rate_win = [(w, k) for w, k in self._rate_win if now - w < 2.0]
+        rate = sum(k for _, k in self._rate_win) / 2.0
         self.lbl_stream.setText(
-            f"stream: {rate:.0f} samples/s shown, "
+            f"stream: {rate:.0f} samples/s, "
             f"{self._stream_dropped} dropped")
 
     async def _erase_log(self):

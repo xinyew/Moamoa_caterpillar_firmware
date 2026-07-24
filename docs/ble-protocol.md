@@ -80,8 +80,16 @@ Write Without Response.
 
 Write 4 or 6 B: `{odr_code u8, content u8, accel_fs u8, gyro_fs u8
 [, preview_hz u16]}`.  Logging always runs at the full ODR;
-`preview_hz` caps only the live stream (0/absent = auto ≈ the
-~1300 samples/s link budget).
+`preview_hz` caps only the live stream (0/absent = auto).  The stream
+paces itself to the link: the base budget is ~1300 samples/s idle and
+~500 while a log session runs (the widened connection interval only
+carries ~600 on a good day), an explicit `preview_hz` above the
+active budget is clamped to it, and on sustained FIFO drops the
+device further halves the preview rate within a second (up to 16×,
+probing back up after quiet periods — with escalating patience if
+probes keep failing).  Result: the preview rate follows what the link
+actually delivers instead of overflowing into bursty gaps.  Hosts
+must treat the per-packet `decim` byte as dynamic.
 
 - `odr_code`: 1=12.5, 2=26, 3=52, 4=104, 5=208, 6=416, 7=833, 8=1660,
   9=3330, 10=6660 Hz.  Defaults persist in device settings (factory

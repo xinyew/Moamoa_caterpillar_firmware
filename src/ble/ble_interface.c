@@ -836,6 +836,6 @@ int ble_interface_init(void)
         return ret;
     }
 
-    LOG_INF("BLE advertising as \"Caterpillar\"");
+    LOG_INF("BLE advertising as \"%s\"", bt_get_name());
     return 0;
 }

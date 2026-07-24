@@ -36,16 +36,47 @@ uint16_t ble_odr_hz(uint8_t odr_code)
     return (odr_code <= 10) ? odr_hz_tab[odr_code] : 0;
 }
 
-/* Live stream budget: ~1300 samples/s of 16 B records â‰ˆ 20 KiB/s */
-#define STREAM_BUDGET_SPS  1300
+/* Live stream budget: ~1300 samples/s of 16 B records = ~20 KiB/s on
+ * an idle link.  While a log session runs the connection interval is
+ * widened to ~50 ms for flash timeslots and the link really carries
+ * only ~600 samples/s — the budget drops so the stream FIFO paces
+ * itself instead of overflowing (measured at auto/833 Hz while
+ * logging: ~270 dropped/s in bursts, i.e. a visibly choppy preview).
+ * The budget is a physical link property, so it also caps an explicit
+ * preview rate.
+ */
+#define STREAM_BUDGET_SPS      1300
+#define STREAM_BUDGET_LOG_SPS  500
 
 static uint8_t stream_decim = 1;
 static uint16_t stream_preview_hz;   /* 0 = auto (link-budget limit) */
 
+/* The budgets above are what the link carries on a GOOD day; real
+ * capacity varies run to run (RF, retransmissions, what the central
+ * negotiated).  On sustained FIFO drops the sink halves the preview
+ * rate within a second (shift up to 16x) and probes back up after 5
+ * quiet seconds — the preview stays gap-free at whatever rate the
+ * link actually delivers.
+ */
+static uint8_t stream_adapt;         /* extra decim shift, 0..4 */
+static uint8_t adapt_calm;           /* consecutive drop-free seconds */
+static uint8_t adapt_calm_need = 5;  /* seconds of calm before probing */
+static uint32_t adapt_last_dropped;
+static int64_t adapt_win_start;
+static int64_t adapt_last_probe = INT64_MIN / 2;
+
+static uint8_t stream_decim_eff(void)
+{
+    uint32_t d = (uint32_t)stream_decim << stream_adapt;
+
+    return (uint8_t)MIN(d, 255);
+}
+
 void ble_transport_stream_update_decim(void)
 {
     uint16_t hz = ble_odr_hz(IMU_SHARED->cfg_odr);
-    uint32_t target = STREAM_BUDGET_SPS;
+    uint32_t target = imu_log_active() ? STREAM_BUDGET_LOG_SPS
+                                       : STREAM_BUDGET_SPS;
 
     if (stream_preview_hz != 0 && stream_preview_hz < target) {
         target = stream_preview_hz;
@@ -53,6 +84,11 @@ void ble_transport_stream_update_decim(void)
     uint32_t d = (hz + target - 1) / target;
 
     stream_decim = (uint8_t)CLAMP(d, 1, 255);
+    stream_adapt = 0;                /* config changed: re-learn */
+    adapt_calm = 0;
+    adapt_calm_need = 5;
+    adapt_last_probe = INT64_MIN / 2;
+    adapt_win_start = k_uptime_get();
 }
 
 void ble_stream_set_preview(uint16_t hz)
@@ -147,11 +183,51 @@ static bool tx_notify(const struct bt_uuid *uuid, const void *data,
     return true;
 }
 
+/* 1 Hz adaptation window, run in pump context (sink is called every
+ * 4 ms while streaming): back off fast on drops, recover slowly.
+ */
+static void stream_adapt_tick(void)
+{
+    int64_t now = k_uptime_get();
+
+    if (now - adapt_win_start < 1000) {
+        return;
+    }
+    adapt_win_start = now;
+
+    uint32_t drops = stream_dropped - adapt_last_dropped;
+
+    adapt_last_dropped = stream_dropped;
+    if (drops > 10) {
+        if (stream_adapt < 4) {
+            stream_adapt++;
+        }
+        /* A probe up that immediately re-dropped means the link
+         * really can't take more: probe less and less often instead
+         * of sawtoothing between clean and choppy.
+         */
+        if (now - adapt_last_probe < 10000 && adapt_calm_need < 30) {
+            adapt_calm_need += 5;
+        }
+        adapt_calm = 0;
+    } else if (drops == 0) {
+        if (++adapt_calm >= adapt_calm_need && stream_adapt > 0) {
+            stream_adapt--;
+            adapt_last_probe = now;
+            adapt_calm = 0;
+        }
+    } else {
+        adapt_calm = 0;
+    }
+}
+
 /* Pump-context sink: decimate and stage.  No BT calls, no blocking. */
 static void stream_sink(const struct imu_sample *s, uint32_t n)
 {
+    uint8_t decim = stream_decim_eff();
+
     for (uint32_t i = 0; i < n; i++) {
-        if ((stream_sample_ctr++ % stream_decim) != 0) {
+        if ((stream_sample_ctr++ % decim) != 0) {
             continue;
         }
         if (sfifo_head - sfifo_tail >= SFIFO_N) {
@@ -164,6 +240,7 @@ static void stream_sink(const struct imu_sample *s, uint32_t n)
         sfifo[sfifo_head & (SFIFO_N - 1)] = s[i];
         sfifo_head = sfifo_head + 1;
     }
+    stream_adapt_tick();
     k_sem_give(&tx_wake);
 }
 
@@ -202,7 +279,7 @@ static void tx_thread(void *a, void *b, void *c)
                        16);
             }
             stream_pkt[0] = n;
-            stream_pkt[1] = stream_decim;
+            stream_pkt[1] = stream_decim_eff();
             stream_pkt[2] = 0;
             stream_pkt[3] = 0;
             sys_put_le32(stream_dropped, &stream_pkt[4]);

@@ -25,6 +25,12 @@ app pump thread (4 ms poll, memcpy only — never blocks)
 - Preview decimation is pick-every-Nth with **no anti-alias filter**:
   content above half the preview rate aliases in the live plot.  The
   full-rate log/dump is the only spectrally valid record.
+- The preview rate is **adaptive**: base budget ~1300 samples/s idle /
+  ~500 while logging, then the device backs off further (halving,
+  ≤16×) whenever the link can't keep up and probes back when it can —
+  a weak link means a slower but *steady* preview, not a choppy one.
+  The GUI smooths burst arrivals into an even scroll (~0.2 s display
+  latency) and breaks the trace where samples were really lost.
 
 ## Rate envelope (measured, v1.3.7 writer-thread architecture)
 
