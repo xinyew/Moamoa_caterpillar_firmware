@@ -329,8 +329,41 @@ class MainWindow(QMainWindow):
 
         self._status_timer = QTimer(self)
         self._status_timer.setInterval(1000)
-        self._status_timer.timeout.connect(
-            lambda: asyncio.ensure_future(self._poll_status()))
+        self._status_timer.timeout.connect(self._kick_poll)
+        self._poll_task: asyncio.Task | None = None
+
+    def _kick_poll(self):
+        """Spawn a status poll only if the previous one finished —
+        polls must never pile up (reads can outlast the 1 s interval
+        during dumps)."""
+        if self._poll_task is None or self._poll_task.done():
+            self._poll_task = asyncio.ensure_future(self._poll_status())
+
+    async def _pick_file(self, save: bool, title: str, default: str,
+                         filt: str):
+        """Open a modal file dialog safely under qasync.
+
+        A modal dialog spins a nested Qt event loop inside this
+        coroutine's frame; if other asyncio tasks (the status poll)
+        are stepped during that, Python >=3.12 raises 'Cannot enter
+        into task ... while another task is being executed' storms.
+        So: stop the poll timer, drain any in-flight poll, THEN open
+        the dialog.
+        """
+        self._status_timer.stop()
+        if self._poll_task is not None and not self._poll_task.done():
+            try:
+                await self._poll_task
+            except Exception:
+                pass
+        try:
+            if save:
+                return QFileDialog.getSaveFileName(self, title, default,
+                                                   filt)
+            return QFileDialog.getOpenFileName(self, title, default, filt)
+        finally:
+            if self.ble.connected:
+                self._status_timer.start()
 
     # ---- UI construction ------------------------------------------------
 
@@ -798,8 +831,8 @@ class MainWindow(QMainWindow):
         stamp = (time.strftime("%Y%m%d_%H%M%S",
                                time.localtime(sess.wall_start))
                  if sess.wall_start else f"session{sess.seq}")
-        path, _ = QFileDialog.getSaveFileName(
-            self, f"Save session #{sess.seq}", f"imu_{stamp}",
+        path, _ = await self._pick_file(
+            True, f"Save session #{sess.seq}", f"imu_{stamp}",
             "CSV (*.csv);;NumPy (*.npz)")
         if not path:
             return
