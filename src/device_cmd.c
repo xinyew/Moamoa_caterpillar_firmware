@@ -7,7 +7,8 @@
 #include "drivers/driver_vdc_sense.h"
 #include "imu_log.h"
 #include "settings_store.h"
-#include "interface/ble_interface.h"
+#include "session.h"
+#include "interface/ble_transport.h"
 
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
@@ -45,18 +46,16 @@ static void execute(const struct device_cmd *cmd)
     }
     case DEVICE_CMD_LOG:
         switch (cmd->log.op) {
-        case 0:                          /* stop */
+        case DEVICE_LOG_OP_STOP:
             imu_log_stop();
-            ble_session_conn_params(false);
-            ble_imu_run_update();        /* power down if stream idle */
+            session_on_log_stopped();
             break;
-        case 1:                          /* start (always circular) */
+        case DEVICE_LOG_OP_START:
             if (imu_log_start(1) == 0) {
-                ble_session_conn_params(true);
-                ble_imu_run_update();    /* power the sensor up */
+                session_on_log_started();
             }
             break;
-        case 2:                          /* erase */
+        case DEVICE_LOG_OP_ERASE:
             imu_log_erase();
             break;
         default:

@@ -49,6 +49,22 @@ SRAM (256 KB):
    drops are counted).  Config changes arrive via a seq-numbered
    block in shared SRAM, polled every 32 samples.
 
+## Source layering (biosensor-style main→app→adapter, v1.4.1)
+
+| Layer | Files | Role |
+|---|---|---|
+| entry | `main.c` | trivial: `app_init()` + `app_run()` |
+| lifecycle | `app.c` | boot sequence, health monitor |
+| orchestration | `session.c` | wall clock, on-demand sampling arbiter, session side effects (conn-param policy) |
+| execution | `device_cmd.c` | slow operations off the BT RX thread |
+| control plane | `interface/ble_interface.c` | GATT tables + decode-and-delegate handlers, connection lifecycle |
+| data plane | `interface/ble_transport.c` | credit-paced TX thread (stream/messages), dump thread, tier-2 ring |
+| storage | `imu_log.c`, `settings_store.c` | flash session log; persisted settings |
+| pipeline | `imu_pump.c` | drains the FLPR ring (memcpy only) |
+
+Rule of the house: nothing in a GATT handler or the pump may block;
+nothing outside `ble_transport.c` may send notifications.
+
 ## App-core threads
 
 | Thread | Prio | Role |

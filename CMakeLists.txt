@@ -71,6 +71,8 @@ endif()
 
 target_sources(app PRIVATE
     src/main.c
+    src/app.c
+    src/session.c
     src/flpr_launch.c
     src/imu_pump.c
     src/imu_log.c
@@ -83,6 +85,7 @@ target_sources(app PRIVATE
     src/drivers/driver_led.c
     src/drivers/driver_vdc_sense.c
     src/interface/ble_interface.c
+    src/interface/ble_transport.c
 )
 
 # For common/imu_shared.h (shared with the FLPR image)
