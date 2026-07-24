@@ -1,6 +1,8 @@
 # CLAUDE.md — Agent Coding Instructions
 
-> Full project docs in README.md. This file is the compact reference for coding.
+> Detailed docs in docs/ (ble-protocol, imu-logging, architecture,
+> build-flash-ota); README.md is the overview. This file is the
+> compact reference for coding.
 
 ## Quick Ref
 
