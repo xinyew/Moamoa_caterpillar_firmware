@@ -25,9 +25,9 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog,
-    QGridLayout, QGroupBox, QHBoxLayout, QInputDialog, QLabel,
-    QMainWindow, QPlainTextEdit, QProgressBar, QPushButton, QSpinBox,
-    QVBoxLayout, QWidget,
+    QGridLayout, QGroupBox, QHBoxLayout, QLabel, QMainWindow,
+    QPlainTextEdit, QProgressBar, QPushButton, QSpinBox, QVBoxLayout,
+    QWidget,
 )
 import pyqtgraph as pg
 import qasync
@@ -103,7 +103,10 @@ class BleWorker:
             info = P.parse_adv(name, adv.manufacturer_data)
             if info is None:
                 return
-            info.update(address=device.address, rssi=adv.rssi)
+            # Keep the BLEDevice handle: connecting by bare address
+            # fails on WinRT unless Windows has the device cached.
+            info.update(address=device.address, rssi=adv.rssi,
+                        dev=device)
             found[device.address] = info
 
         scanner = BleakScanner(on_adv)
@@ -114,25 +117,11 @@ class BleWorker:
                       key=lambda e: (e["robot_id"] is None,
                                      e["robot_id"] or 0, e["name"]))
 
-    async def connect(self):
-        self.ui.log(f'Scanning for Caterpillars ("{P.DEVICE_PREFIX}*") ...')
-        robots = await self.scan_fleet()
-        if not robots:
-            self.ui.log("No Caterpillar found.")
-            return False
-        target = robots[0] if len(robots) == 1 \
-            else self.ui.pick_robot(robots)
-        if target is None:
-            self.ui.log("Connect cancelled.")
-            return False
-        self.ui.log(f"Selected {target['name']} [{target['address']}]")
-        dev = await BleakScanner.find_device_by_address(target["address"],
-                                                        timeout=10.0)
-        if dev is None:
-            self.ui.log("Device disappeared during scan.")
-            return False
-
+    async def connect(self, target: dict):
+        dev = target["dev"]
         self.last_name = target["name"]
+        self.ui.log(f"Connecting to {target['name']} "
+                    f"[{target['address']}] ...")
         # Windows caches GATT tables across firmware updates; don't.
         self.client = BleakClient(
             dev, disconnected_callback=self._on_disconnect,
@@ -424,6 +413,14 @@ class MainWindow(QMainWindow):
 
         conn_box = QGroupBox("Connection")
         cl = QGridLayout(conn_box)
+        self.cmb_devices = QComboBox()
+        self.cmb_devices.setPlaceholderText("scan for robots…")
+        self.cmb_devices.setToolTip(
+            "Visible Caterpillars (Cat-*). Scan refreshes the list; "
+            "Connect targets the selected robot.")
+        self.btn_scan = QPushButton("Scan")
+        self.btn_scan.clicked.connect(
+            lambda: asyncio.ensure_future(self._do_scan()))
         self.btn_connect = QPushButton("Connect")
         self.btn_connect.clicked.connect(
             lambda: asyncio.ensure_future(self._do_connect()))
@@ -453,17 +450,19 @@ class MainWindow(QMainWindow):
         self.btn_robot_id = QPushButton("Assign ID")
         self.btn_robot_id.clicked.connect(lambda: asyncio.ensure_future(
             self.ble.set_robot_id(self.spin_robot_id.value())))
-        cl.addWidget(self.btn_connect, 0, 0)
-        cl.addWidget(self.lbl_conn, 0, 1)
-        cl.addWidget(QLabel("Firmware:"), 1, 0)
-        cl.addWidget(self.lbl_fw, 1, 1)
-        cl.addWidget(self.chk_led, 2, 0)
-        cl.addWidget(self.btn_tput, 2, 1)
-        cl.addWidget(self.btn_devlog, 3, 0)
+        cl.addWidget(self.cmb_devices, 0, 0)
+        cl.addWidget(self.btn_scan, 0, 1)
+        cl.addWidget(self.btn_connect, 1, 0)
+        cl.addWidget(self.lbl_conn, 1, 1)
+        cl.addWidget(QLabel("Firmware:"), 2, 0)
+        cl.addWidget(self.lbl_fw, 2, 1)
+        cl.addWidget(self.chk_led, 3, 0)
+        cl.addWidget(self.btn_tput, 3, 1)
+        cl.addWidget(self.btn_devlog, 4, 0)
         rid = QHBoxLayout()
         rid.addWidget(self.spin_robot_id, 1)
         rid.addWidget(self.btn_robot_id)
-        cl.addLayout(rid, 3, 1)
+        cl.addLayout(rid, 4, 1)
         left.addWidget(conn_box)
 
         motor_box = QGroupBox("Motor")
@@ -638,30 +637,18 @@ class MainWindow(QMainWindow):
         ts = time.strftime("%H:%M:%S")
         self.console.appendPlainText(f"[{ts}] {text}")
 
-    def pick_robot(self, robots: list[dict]) -> dict | None:
-        """Choose one of several visible Caterpillars.
-
-        Modal is safe here: connecting means we're disconnected, so
-        the status-poll timer isn't running (cf. _pick_file).
-        """
-        labels = []
-        for e in robots:
-            rid = "unassigned" if not e["robot_id"] else f"#{e['robot_id']}"
-            extra = (f", fw {'.'.join(map(str, e['fw']))}" if e["fw"]
-                     else "")
-            sess = ", LOGGING" if e["session_active"] else ""
-            labels.append(f"{e['name']}  ({rid}{extra}{sess})  "
-                          f"{e['rssi']} dBm")
-        choice, ok = QInputDialog.getItem(
-            self, "Select robot",
-            f"{len(robots)} Caterpillars visible:", labels, 0, False)
-        if not ok:
-            return None
-        return robots[labels.index(choice)]
+    @staticmethod
+    def _robot_label(e: dict) -> str:
+        rid = "unassigned" if not e["robot_id"] else f"#{e['robot_id']}"
+        extra = f", fw {'.'.join(map(str, e['fw']))}" if e["fw"] else ""
+        sess = ", LOGGING" if e["session_active"] else ""
+        return f"{e['name']}  ({rid}{extra}{sess})  {e['rssi']} dBm"
 
     def on_disconnected(self):
         self.lbl_conn.setText("disconnected")
         self.btn_connect.setText("Connect")
+        self.cmb_devices.setEnabled(True)
+        self.btn_scan.setEnabled(True)
         self._status_timer.stop()
         self._plot_timer.stop()
         self.btn_log.setChecked(False)
@@ -671,17 +658,51 @@ class MainWindow(QMainWindow):
 
     # ---- async actions --------------------------------------------------
 
+    async def _do_scan(self):
+        """Refresh the device dropdown with all visible Caterpillars.
+        Keeps the previously selected robot selected if still around."""
+        prev = self.cmb_devices.currentData()
+        self.btn_scan.setEnabled(False)
+        self.btn_scan.setText("Scanning…")
+        try:
+            self.log(f'Scanning for Caterpillars ("{P.DEVICE_PREFIX}*") ...')
+            robots = await self.ble.scan_fleet()
+        finally:
+            self.btn_scan.setText("Scan")
+            self.btn_scan.setEnabled(not self.ble.connected)
+        self.cmb_devices.clear()
+        for e in robots:
+            self.cmb_devices.addItem(self._robot_label(e), e)
+        if prev is not None:
+            idx = next((i for i in range(self.cmb_devices.count())
+                        if self.cmb_devices.itemData(i)["address"]
+                        == prev["address"]), -1)
+            if idx >= 0:
+                self.cmb_devices.setCurrentIndex(idx)
+        if self.cmb_devices.currentIndex() < 0 and self.cmb_devices.count():
+            self.cmb_devices.setCurrentIndex(0)   # placeholder -> first hit
+        self.log(f"{len(robots)} Caterpillar(s) visible."
+                 if robots else "No Caterpillar found.")
+        return robots
+
     async def _do_connect(self):
         if self.ble.connected:
             await self.ble.disconnect()
             return
         self.btn_connect.setEnabled(False)
         try:
-            if await self.ble.connect():
+            if self.cmb_devices.currentData() is None:
+                await self._do_scan()      # first click: scan for them
+            target = self.cmb_devices.currentData()
+            if target is None:
+                return
+            if await self.ble.connect(target):
                 self.lbl_conn.setText(
                     f"connected: {self.ble.last_name or '?'}")
                 self.btn_connect.setText("Disconnect")
                 self._set_connected_ui(True)
+                self.cmb_devices.setEnabled(False)
+                self.btn_scan.setEnabled(False)
                 try:
                     self.spin_robot_id.setValue(
                         await self.ble.read_robot_id())

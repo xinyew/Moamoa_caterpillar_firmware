@@ -13,8 +13,8 @@ implementations: `src/ble/ble_interface.c` (firmware) and
 ## Advertising data (fleet identity, fw ≥ 1.5.0)
 
 Hosts can enumerate a fleet without connecting: `fleet.py scan`,
-`ble_control.py --scan`, or the GUI's connect picker match the name
-prefix `Cat-` and decode manufacturer data (test company id
+`ble_control.py --scan`, or the GUI's Scan + device dropdown match the
+name prefix `Cat-` and decode manufacturer data (test company id
 `0xFFFF`):
 
 | Off | Content |
@@ -165,8 +165,8 @@ Effective rate ≈ 18–24 KiB/s.
 
 ## Host session flow (what the GUI does)
 
-1. Scan by the `Cat-` name prefix (picker when several are visible),
-   connect with GATT cache disabled
+1. Scan by the `Cat-` name prefix into a device dropdown; connect to
+   the selected robot with GATT cache disabled
    (`winrt=dict(use_cached_services=False)` — Windows serves stale
    tables after OTAs otherwise), subscribe 0xFFEC + 0xFFEB.
 2. Write 0xFFEE with the current unix time (timestamps for sessions).

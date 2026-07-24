@@ -66,8 +66,11 @@ OTA compatibility.
 ## Sessions
 
 - **Circular only.** A session runs from start until the stop command
-  or BLE disconnect (auto-closed).  It never stops for space: the
-  write head overwrites the oldest data in the ring.
+  or BLE disconnect (auto-closed) — unless started as **detached**
+  (log op 3, fleet mode): a detached session keeps logging with no
+  host connected and ends only on an explicit stop (or firmware
+  update).  A session never stops for space: the write head
+  overwrites the oldest data in the ring.
 - When the head reaches the *beginning of an older session*, that
   session's entry is invalidated and `session #N overwritten by
   session #M — removed` is sent on 0xFFEC; the GUI list refreshes
@@ -87,7 +90,9 @@ OTA compatibility.
 ## Dump & file formats
 
 Per-session, offset-addressable, resumable — see
-[ble-protocol.md](ble-protocol.md).  The GUI saves both:
+[ble-protocol.md](ble-protocol.md).  The GUI saves both formats;
+`fleet.py collect` writes the same files as `cat<NN>_<timestamp>.*`
+per robot:
 
 - **CSV**: header comment (session, start time, ODR, FS ranges), then
   `t_s, ax_g, ay_g, az_g, gx_dps, gy_dps, gz_dps, temp_c, seq16`.

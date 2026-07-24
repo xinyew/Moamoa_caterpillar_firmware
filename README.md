@@ -19,6 +19,9 @@ OTA update, both cores.
   motor always boots off)
 - Full BLE control surface + open OTA DFU (MCUboot, dev-key signed);
   device warnings live (0xFFEC) and as queryable history (0xFFF0)
+- Fleet support (up to 20 robots): per-robot names/ids, enumeration
+  from advertising data alone, detached (untethered) log sessions,
+  sequential deploy/collect tooling
 - PySide6 GUI and CLI for everything
 
 ## Documentation
@@ -94,6 +97,6 @@ Board files: `boards/kamoamoa/caterpillar/` (both cores).
 ├── flpr/                    # RISC-V FLPR core (own VERSION, auto-built)
 ├── common/imu_shared.h      # cross-core shared-SRAM contract
 ├── boards/kamoamoa/caterpillar/
-├── scripts/                 # host tools: CLI, GUI, protocol spec, codegen
+├── scripts/                 # host tools: CLI, GUI, fleet tool, protocol spec, codegen
 └── docs/                    # detailed documentation
 ```

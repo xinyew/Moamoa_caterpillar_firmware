@@ -67,6 +67,8 @@ Needs `pip install smpclient`.  Upload ≈ 15–20 KiB/s (~3–4 min for a
 ~214 KB image incl. install), then MCUboot copies the slot (~40 s,
 radio silent) and boots.  Same-image upload is a benign no-op.
 Verify with `--read`: app version, FLPR version, IMU ok.
+With several robots powered, target one: `--robot N` (fleet id) or
+`--name Cat-XXXX`; bare `--dfu` errors out listing what it saw.
 
 Rules:
 

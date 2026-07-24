@@ -33,6 +33,16 @@ Control GUI (motor + IMU config + live plots + log dump; standalone,
 protocol spec in scripts/protocol.py):
 $ pip install -r scripts/requirements.txt
 $ python scripts/caterpillar_gui.py
+Fleet (v1.5+, up to 20 robots): devices self-name "Cat-XXXX" (last 4
+hex digits of the FICR device id) until assigned an id 1-20 -> "Cat-NN"
+(0xFFF1 char / GUI Assign ID / --set-id; adv name updates after
+disconnect). Advertising mfg data (0xFFFF) carries id + fw + session
+flag so hosts enumerate without connecting. Log op 3 = DETACHED
+session (survives disconnect; stop explicitly on a later connection).
+Sequential multi-robot workflow:
+$ python scripts/fleet.py scan | assign N | deploy --robots 1,2 | collect --all -o data
+Bleak/WinRT gotcha: connect with the scanner's BLEDevice object, never
+a bare address string (fails "not found" even right after a scan).
 IMU data path (v1.4+): sampling is ON-DEMAND - the sensor is powered
 down unless a log session runs or the stream is subscribed. FLPR
 samples at the configured ODR (12.5 Hz-6.66 kHz) into a shared-SRAM

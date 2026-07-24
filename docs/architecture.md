@@ -61,7 +61,7 @@ SRAM (256 KB):
 | lifecycle | `app/app.c` | boot sequence, health monitor |
 | orchestration | `app/session.c` | wall clock, on-demand sampling arbiter, session side effects (conn-param policy) |
 | execution | `app/device_cmd.c` | slow operations off the BT RX thread |
-| control plane | `ble/ble_interface.c` | GATT tables + decode-and-delegate handlers, connection lifecycle |
+| control plane | `ble/ble_interface.c` | GATT tables + decode-and-delegate handlers, connection lifecycle, fleet advertising identity (name + mfg data, rebuilt per adv start) |
 | data plane | `ble/ble_transport.c` | credit-paced TX thread (stream/messages), dump thread, tier-2 ring |
 | storage | `imu/imu_log.c`, `settings/settings_store.c` | flash session log; persisted settings |
 | pipeline | `imu/imu_pump.c` | drains the FLPR ring (memcpy only) |
@@ -77,7 +77,7 @@ nothing outside `ble_transport.c` may send notifications.
 | flash writer (`imu/imu_log.c`) | 6 | persists 4 KB batches from the 24 KB staging ring (each flash op waits for an MPSL radio timeslot — never in a real-time thread) |
 | dump (`ble/ble_transport.c`) | 7 | streams session data as credit-paced notifications |
 | TX (`ble/ble_transport.c`) | 9 | sends stream packets + message lines, credit-paced (≤2 in flight) |
-| device_cmd (`app/device_cmd.c`) | 10 | executes slow commands (VDC ramp, log start/stop/erase) off the BT RX thread |
+| device_cmd (`app/device_cmd.c`) | 10 | executes slow commands (VDC ramp, log start/stop/erase/start-detached) off the BT RX thread |
 | main | — | 1 Hz health monitor → warnings to 0xFFEC (FLPR dead, IMU dead, samples stalled, overrun/backlog deltas) |
 | BT stack threads | — | standard Zephyr controller/host |
 
