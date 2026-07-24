@@ -41,6 +41,17 @@ and streams decimated (~20 KiB/s) over 0xFFE9. Warnings/errors go to
 Load RTT console and connect to the board (makesure to set a timeout of 5 seconds, if there's nothing or returned meaning no output):
 $ & "~\Downloads\SimplicityCommander-Windows\SimplicityCommander-Windows\Commander-cli_win32_x64_1v24p1b1980\Simplicity Commander CLI\commander-cli.exe"  rtt connect --device nrf54l15_M33
 
+## Settings registry
+settings.yml is the single source of truth for device settings (ids,
+ranges, defaults). After editing it, ALWAYS run:
+$ python scripts/generate_settings.py
+This regenerates three COMMITTED files (never edit them by hand):
+src/settings_gen.h, scripts/protocol_limits.py, docs/settings.md.
+The build fails ("generated files are stale") if you forget - the
+generator stamps the settings.yml sha1 into settings_gen.h and CMake
+verifies it. Values persist on-device (spare 4 KB flash @0x164000,
+survives OTA) and apply at boot; rail/driver are never persisted.
+
 ## VS Code IntelliSense
 .vscode/ (committed) wires the C/C++ extension to the build's
 compile_commands.json (app: build/Moamoa_caterpillar_firmware/, FLPR:

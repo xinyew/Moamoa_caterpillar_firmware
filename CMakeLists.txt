@@ -12,13 +12,22 @@ project(caterpillar)
 set(FLPR_BUILD_DIR ${CMAKE_CURRENT_SOURCE_DIR}/build-flpr)
 set(FLPR_BIN ${FLPR_BUILD_DIR}/zephyr/zephyr.bin)
 
-if(NOT EXISTS ${FLPR_BUILD_DIR}/build.ninja)
+# First-time bootstrap runs a nested west build; the outer (ARM) app
+# configure leaks toolchain environment into it, which poisons the
+# RISC-V compiler discovery (verified from a clean clone: FLPR files
+# compiled with arm-zephyr-eabi-gcc).  Scrub those variables.
+if(NOT EXISTS ${FLPR_BIN})
     message(STATUS "FLPR: first-time configure+build of ${FLPR_BUILD_DIR}")
     execute_process(
-        COMMAND ${PYTHON_EXECUTABLE} -m west build
+        COMMAND ${CMAKE_COMMAND} -E env
+                --unset=CC --unset=CXX --unset=ASM
+                --unset=CROSS_COMPILE --unset=TOOLCHAIN_HOME
+                --unset=ZEPHYR_TOOLCHAIN_VARIANT
+                --unset=CMAKE_TOOLCHAIN_FILE
+                ${PYTHON_EXECUTABLE} -m west build
                 -b caterpillar/nrf54l15/cpuflpr
                 --build-dir ${FLPR_BUILD_DIR}
-                ${CMAKE_CURRENT_SOURCE_DIR}/flpr --no-sysbuild
+                ${CMAKE_CURRENT_SOURCE_DIR}/flpr --no-sysbuild --pristine
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         RESULT_VARIABLE flpr_rc
     )
