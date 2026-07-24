@@ -67,15 +67,16 @@ Board files: `boards/kamoamoa/caterpillar/` (both cores).
 
 ```
 ├── src/                     # ARM app core
-│   ├── main.c               # boot, health monitor
-│   ├── flpr_launch.c        # copies embedded FLPR image to SRAM, starts VPR
-│   ├── imu_pump.c           # drains FLPR ring -> log + stream
-│   ├── imu_log.c            # circular session log in RRAM
-│   ├── drivers/             # motor / digipot / ADC / LED
-│   └── interface/           # BLE GATT server
+│   ├── main.c               # trivial entry
+│   ├── app/                 # lifecycle: boot+health (app.c),
+│   │                        #   orchestration (session.c), work queue (device_cmd.c)
+│   ├── imu/                 # pipeline: FLPR launch, ring pump, flash session log
+│   ├── ble/                 # control plane (ble_interface), data plane (ble_transport)
+│   ├── settings/            # persisted registry (generated table + store)
+│   └── drivers/             # motor / digipot / ADC / LED
 ├── flpr/                    # RISC-V FLPR core (own VERSION, auto-built)
 ├── common/imu_shared.h      # cross-core shared-SRAM contract
 ├── boards/kamoamoa/caterpillar/
-├── scripts/                 # host tools: CLI, GUI, protocol spec
+├── scripts/                 # host tools: CLI, GUI, protocol spec, codegen
 └── docs/                    # detailed documentation
 ```

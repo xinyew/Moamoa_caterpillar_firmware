@@ -2,7 +2,7 @@
 #
 # Regenerate after editing:   python scripts/generate_settings.py
 # Outputs (all AUTO-GENERATED, do not edit by hand):
-#   src/settings_gen.h        C table: ids, names, defaults, ranges
+#   src/settings/settings_gen.h  C table: ids, names, defaults, ranges
 #   scripts/protocol_limits.py  limits shared by protocol.py / GUI / CLI
 #   docs/settings.md          human-readable table
 #

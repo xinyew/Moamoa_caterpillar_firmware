@@ -61,7 +61,8 @@ target_include_directories(app PRIVATE ${FLPR_GEN_DIR})
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
              ${CMAKE_CURRENT_SOURCE_DIR}/settings.yml)
 file(SHA1 ${CMAKE_CURRENT_SOURCE_DIR}/settings.yml SETTINGS_YML_SHA1)
-file(READ ${CMAKE_CURRENT_SOURCE_DIR}/src/settings_gen.h SETTINGS_GEN_CONTENT)
+file(READ ${CMAKE_CURRENT_SOURCE_DIR}/src/settings/settings_gen.h
+     SETTINGS_GEN_CONTENT)
 string(FIND "${SETTINGS_GEN_CONTENT}" "${SETTINGS_YML_SHA1}" SETTINGS_HASH_POS)
 if(SETTINGS_HASH_POS EQUAL -1)
     message(FATAL_ERROR
@@ -71,22 +72,26 @@ endif()
 
 target_sources(app PRIVATE
     src/main.c
-    src/app.c
-    src/session.c
-    src/flpr_launch.c
-    src/imu_pump.c
-    src/imu_log.c
-    src/device_cmd.c
-    src/settings_store.c
+    src/app/app.c
+    src/app/session.c
+    src/app/device_cmd.c
+    src/imu/imu_pump.c
+    src/imu/imu_log.c
+    src/imu/flpr_launch.c
+    src/settings/settings_store.c
+    src/ble/ble_interface.c
+    src/ble/ble_transport.c
     src/drivers/driver_stbb1_apur.c
     src/drivers/driver_drv8212.c
     src/drivers/max5419.c
     src/drivers/driver_pwm.c
     src/drivers/driver_led.c
     src/drivers/driver_vdc_sense.c
-    src/interface/ble_interface.c
-    src/interface/ble_transport.c
 )
 
 # For common/imu_shared.h (shared with the FLPR image)
-target_include_directories(app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+# Repo root (for common/imu_shared.h) and src/ (module-qualified
+# includes: "app/session.h", "imu/imu_log.h", "ble/ble_transport.h"...)
+target_include_directories(app PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/src)

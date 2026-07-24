@@ -1,5 +1,5 @@
-/*
- * BLE control-plane adapter — GATT service + connection lifecycle.
+﻿/*
+ * BLE control-plane adapter â€” GATT service + connection lifecycle.
  *
  * Handlers here only DECODE and DELEGATE: fast driver pokes run
  * inline, slow operations go to device_cmd, run-state policy to
@@ -7,11 +7,11 @@
  * file may block the BT RX thread.
  *
  * Wire contract (details in docs/ble-protocol.md):
- *   0xFFE1 write freq · 0xFFE2 write VDC · 0xFFE3 read measured VDC
- *   0xFFE4 write rail · 0xFFE5 write driver · 0xFFE6 read status v3
- *   0xFFE7 throughput sink · 0xFFE8 IMU config · 0xFFE9 stream notify
- *   0xFFEA log control · 0xFFEB dump · 0xFFEC messages · 0xFFED LED
- *   0xFFEE time sync · 0xFFEF session dir · 0xFFF0 tier-2 log
+ *   0xFFE1 write freq Â· 0xFFE2 write VDC Â· 0xFFE3 read measured VDC
+ *   0xFFE4 write rail Â· 0xFFE5 write driver Â· 0xFFE6 read status v3
+ *   0xFFE7 throughput sink Â· 0xFFE8 IMU config Â· 0xFFE9 stream notify
+ *   0xFFEA log control Â· 0xFFEB dump Â· 0xFFEC messages Â· 0xFFED LED
+ *   0xFFEE time sync Â· 0xFFEF session dir Â· 0xFFF0 tier-2 log
  * Writes accept acknowledged Write Requests and Write-Without-Response.
  */
 
@@ -19,18 +19,18 @@
 #include "ble_transport.h"
 #include "ble_uuids.h"
 
-#include "../app.h"
-#include "../session.h"
-#include "../device_cmd.h"
-#include "../settings_store.h"
-#include "../imu_pump.h"
-#include "../imu_log.h"
-#include "../drivers/driver_pwm.h"
-#include "../drivers/max5419.h"
-#include "../drivers/driver_vdc_sense.h"
-#include "../drivers/driver_stbb1_apur.h"
-#include "../drivers/driver_drv8212.h"
-#include "../drivers/driver_led.h"
+#include "app/app.h"
+#include "app/session.h"
+#include "app/device_cmd.h"
+#include "settings/settings_store.h"
+#include "imu/imu_pump.h"
+#include "imu/imu_log.h"
+#include "drivers/driver_pwm.h"
+#include "drivers/max5419.h"
+#include "drivers/driver_vdc_sense.h"
+#include "drivers/driver_stbb1_apur.h"
+#include "drivers/driver_drv8212.h"
+#include "drivers/driver_led.h"
 #include "common/imu_shared.h"
 
 #include <zephyr/bluetooth/bluetooth.h>
@@ -53,7 +53,7 @@ static const struct bt_data ad[] = {
 };
 
 /* -------------------------------------------------------------------------- */
-/*  Motor characteristics (0xFFE1–0xFFE5)                                     */
+/*  Motor characteristics (0xFFE1â€“0xFFE5)                                     */
 /* -------------------------------------------------------------------------- */
 
 static ssize_t on_freq_write(struct bt_conn *conn,
@@ -449,7 +449,7 @@ static ssize_t on_logctl_write(struct bt_conn *conn,
     }
 
     /* Stop waits up to ~1 s for the flash writer to drain and erase
-     * does timeslot-synced flash writes — both far too slow for the
+     * does timeslot-synced flash writes â€” both far too slow for the
      * BT RX thread.  Validate, enqueue, ack; the status poll and the
      * session directory reflect completion.
      */
@@ -513,7 +513,7 @@ static ssize_t on_dir_read(struct bt_conn *conn,
 }
 
 /* -------------------------------------------------------------------------- */
-/*  Dump request (0xFFEB write) — chunks flow from ble_transport              */
+/*  Dump request (0xFFEB write) â€” chunks flow from ble_transport              */
 /* -------------------------------------------------------------------------- */
 
 static ssize_t on_dump_write(struct bt_conn *conn,
@@ -668,7 +668,7 @@ static void connected(struct bt_conn *conn, uint8_t err)
     if (err) {
         LOG_ERR("BLE connection failed: %u", err);
         /* Advertising already stopped, and disconnected() will not
-         * fire for a connection that never established — re-advertise
+         * fire for a connection that never established â€” re-advertise
          * or the device stays unreachable until reboot.
          */
         k_work_schedule(&adv_restart_work, K_MSEC(50));
@@ -681,7 +681,7 @@ static void connected(struct bt_conn *conn, uint8_t err)
     /* Request low-latency connection params (7.5 ms interval) */
     ble_conn_request_params(false);
 
-    /* Request 2M PHY — doubles air throughput if the central agrees */
+    /* Request 2M PHY â€” doubles air throughput if the central agrees */
     int perr = bt_conn_le_phy_update(conn, BT_CONN_LE_PHY_PARAM_2M);
 
     if (perr) {
@@ -697,7 +697,7 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 
     session_on_disconnect();
 
-    /* Defer re-advertise — bt_le_adv_start must not be called
+    /* Defer re-advertise â€” bt_le_adv_start must not be called
      * synchronously from the BLE stack's own callback context.
      */
     k_work_schedule(&adv_restart_work, K_MSEC(50));
@@ -726,7 +726,7 @@ int ble_interface_init(void)
 
     bt_conn_cb_register(&conn_callbacks);
 
-    /* Start connectable advertising — fast interval for quick discovery */
+    /* Start connectable advertising â€” fast interval for quick discovery */
     adv_param = (struct bt_le_adv_param)BT_LE_ADV_PARAM_INIT(
         BT_LE_ADV_OPT_CONN,
         BT_GAP_ADV_FAST_INT_MIN_1,

@@ -1,14 +1,14 @@
-/*
- * Command work-queue — see device_cmd.h.
+﻿/*
+ * Command work-queue â€” see device_cmd.h.
  */
 
 #include "device_cmd.h"
 #include "drivers/max5419.h"
 #include "drivers/driver_vdc_sense.h"
-#include "imu_log.h"
-#include "settings_store.h"
+#include "imu/imu_log.h"
+#include "settings/settings_store.h"
 #include "session.h"
-#include "interface/ble_transport.h"
+#include "ble/ble_transport.h"
 
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>

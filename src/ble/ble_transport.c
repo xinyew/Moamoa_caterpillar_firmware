@@ -1,13 +1,13 @@
-/*
- * BLE data-plane transport — see ble_transport.h.
+﻿/*
+ * BLE data-plane transport â€” see ble_transport.h.
  * Code moved verbatim from ble_interface.c in the app/adapter split.
  */
 
 #include "ble_transport.h"
 #include "ble_uuids.h"
 
-#include "../imu_pump.h"
-#include "../imu_log.h"
+#include "imu/imu_pump.h"
+#include "imu/imu_log.h"
 #include "common/imu_shared.h"
 
 #include <zephyr/bluetooth/bluetooth.h>
@@ -36,7 +36,7 @@ uint16_t ble_odr_hz(uint8_t odr_code)
     return (odr_code <= 10) ? odr_hz_tab[odr_code] : 0;
 }
 
-/* Live stream budget: ~1300 samples/s of 16 B records ≈ 20 KiB/s */
+/* Live stream budget: ~1300 samples/s of 16 B records â‰ˆ 20 KiB/s */
 #define STREAM_BUDGET_SPS  1300
 
 static uint8_t stream_decim = 1;
@@ -67,16 +67,16 @@ uint8_t ble_transport_stream_decim(void)
 }
 
 /* -------------------------------------------------------------------------- */
-/*  Notification TX thread — live stream (0xFFE9) + message lines (0xFFEC)    */
+/*  Notification TX thread â€” live stream (0xFFE9) + message lines (0xFFEC)    */
 /*                                                                            */
 /*  The pump thread must NEVER call into the BT stack: bt_gatt_notify can    */
 /*  block indefinitely under TX-context exhaustion (proven on hardware by    */
 /*  the dump wedge), and a blocked pump overruns the FLPR ring.  Instead     */
 /*  the sink stages picked samples into an SPSC FIFO and this thread does    */
-/*  all sending, credit-paced (≤2 notifications in flight) so the blocking  */
+/*  all sending, credit-paced (â‰¤2 notifications in flight) so the blocking  */
 /*  path is never entered.  ble_msg() lines ride the same thread.            */
 /*                                                                            */
-/*  Stream packet: 8 B header + N × 16 B struct imu_sample:                   */
+/*  Stream packet: 8 B header + N Ã— 16 B struct imu_sample:                   */
 /*    0 u8 N   1 u8 decim   2 u8 flags   3 u8 rsvd   4 u32 dropped samples    */
 /* -------------------------------------------------------------------------- */
 
@@ -111,14 +111,14 @@ static void tx_sent_cb(struct bt_conn *conn, void *user_data)
 }
 
 /* Send one notification, credit-paced.  Returns false if dropped
- * (congestion, disconnect, jam) — callers discard, never retry stale
+ * (congestion, disconnect, jam) â€” callers discard, never retry stale
  * preview data.
  */
 static bool tx_notify(const struct bt_uuid *uuid, const void *data,
                       uint16_t len)
 {
     if (k_sem_take(&tx_credits, K_MSEC(500)) != 0) {
-        return false;                /* TX jammed — drop */
+        return false;                /* TX jammed â€” drop */
     }
 
     struct bt_gatt_notify_params np = {
@@ -155,7 +155,7 @@ static void stream_sink(const struct imu_sample *s, uint32_t n)
             continue;
         }
         if (sfifo_head - sfifo_tail >= SFIFO_N) {
-            stream_dropped++;        /* TX behind — drop, never block */
+            stream_dropped++;        /* TX behind â€” drop, never block */
             continue;
         }
         if (sfifo_head == sfifo_tail) {
@@ -174,7 +174,7 @@ static void tx_thread(void *a, void *b, void *c)
     while (1) {
         k_sem_take(&tx_wake, K_MSEC(50));
 
-        /* Messages first — rare and high-value */
+        /* Messages first â€” rare and high-value */
         while (msgq_tail != msgq_head) {
             const char *line = msgq[msgq_tail % MSGQ_N];
 
@@ -316,10 +316,10 @@ static void dump_thread(void *a, void *b, void *c)
             chunk[7] = 0;
 
             /* Wait for an in-flight slot; a long wait means the TX
-             * path is wedged — abort and let the host resume.
+             * path is wedged â€” abort and let the host resume.
              */
             if (k_sem_take(&dump_credit_sem, K_SECONDS(3)) != 0) {
-                ble_msg("dump stalled at offset %u — TX jam, resume",
+                ble_msg("dump stalled at offset %u â€” TX jam, resume",
                         off);
                 break;
             }
@@ -363,7 +363,7 @@ K_THREAD_DEFINE(dump_tid, 2048, dump_thread, NULL, NULL, NULL, 7, 0, 0);
 /* -------------------------------------------------------------------------- */
 
 /* Tier-2 log: every ble_msg line also lands in a 2 KB RAM ring that
- * clients can read AFTER THE FACT via 0xFFF0 — warnings emitted while
+ * clients can read AFTER THE FACT via 0xFFF0 â€” warnings emitted while
  * nobody was subscribed (or even connected) stay queryable until they
  * age out.  Lesson learned: flash-write errors went to RTT only and
  * stayed invisible for weeks.
@@ -421,7 +421,7 @@ void ble_msg(const char *fmt, ...)
     /* Mirror to the local log for wired debugging */
     LOG_WRN("%s", line);
 
-    /* Enqueue for the TX thread — callers include the pump thread
+    /* Enqueue for the TX thread â€” callers include the pump thread
      * (holding the log mutex), so sending inline here is forbidden.
      */
     k_spinlock_key_t key = k_spin_lock(&msgq_lock);

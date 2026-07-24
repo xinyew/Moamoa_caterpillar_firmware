@@ -1,5 +1,5 @@
 /* AUTO-GENERATED from settings.yml — do not edit; run scripts/generate_settings.py */
-/* settings.yml sha1: 3e23b8c156ca31f33a62ccc3c48a9615534755cb */
+/* settings.yml sha1: 0740809ab39e3361095de2d267e4ef8b4a3eb016 */
 #ifndef SETTINGS_GEN_H
 #define SETTINGS_GEN_H
 

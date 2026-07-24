@@ -46,7 +46,8 @@ settings.yml is the single source of truth for device settings (ids,
 ranges, defaults). After editing it, ALWAYS run:
 $ python scripts/generate_settings.py
 This regenerates three COMMITTED files (never edit them by hand):
-src/settings_gen.h, scripts/protocol_limits.py, docs/settings.md.
+src/settings/settings_gen.h, scripts/protocol_limits.py,
+docs/settings.md.
 The build fails ("generated files are stale") if you forget - the
 generator stamps the settings.yml sha1 into settings_gen.h and CMake
 verifies it. Values persist on-device (spare 4 KB flash @0x164000,

@@ -1,13 +1,13 @@
-/*
- * Session orchestration — see session.h.
+﻿/*
+ * Session orchestration â€” see session.h.
  * Logic moved from ble_interface.c in the app/adapter split.
  */
 
 #include "session.h"
-#include "settings_store.h"
-#include "imu_log.h"
-#include "interface/ble_interface.h"
-#include "interface/ble_transport.h"
+#include "settings/settings_store.h"
+#include "imu/imu_log.h"
+#include "ble/ble_interface.h"
+#include "ble/ble_transport.h"
 #include "common/imu_shared.h"
 
 #include <zephyr/kernel.h>
@@ -99,7 +99,7 @@ void session_on_log_stopped(void)
 void session_on_disconnect(void)
 {
     /* Stop per-connection data flows (CCC state is not bonded) and
-     * close a running log session — a session ends at the stop click
+     * close a running log session â€” a session ends at the stop click
      * or at connection loss, whichever comes first.
      */
     stream_active = false;

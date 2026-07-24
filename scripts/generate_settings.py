@@ -1,9 +1,9 @@
 """Generate settings artifacts from settings.yml (single source of truth).
 
 Outputs:
-    src/settings_gen.h          firmware table
-    scripts/protocol_limits.py  shared limits for protocol.py
-    docs/settings.md            documentation table
+    src/settings/settings_gen.h  firmware table
+    scripts/protocol_limits.py   shared limits for protocol.py
+    docs/settings.md             documentation table
 
 Run from anywhere:  python scripts/generate_settings.py
 """
@@ -67,8 +67,8 @@ def main() -> int:
         lines.append(f"    {{ {s['id']}, \"{s['name']}\", "
                      f"{s['default']}, {s['min']}, {s['max']} }}, \\")
     lines += ["}", "", "#endif /* SETTINGS_GEN_H */", ""]
-    (ROOT / "src" / "settings_gen.h").write_text("\n".join(lines),
-                                                 encoding="utf-8")
+    (ROOT / "src" / "settings" / "settings_gen.h").write_text(
+        "\n".join(lines), encoding="utf-8")
 
     # ---- python limits ---------------------------------------------------
     py = [f'"""{HDR}"""', ""]
