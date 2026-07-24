@@ -37,7 +37,10 @@ CHAR_UUID_RAIL    = "0000ffe4-0000-1000-8000-00805f9b34fb"
 CHAR_UUID_DRV     = "0000ffe5-0000-1000-8000-00805f9b34fb"
 CHAR_UUID_STATUS  = "0000ffe6-0000-1000-8000-00805f9b34fb"
 CHAR_UUID_TPUT    = "0000ffe7-0000-1000-8000-00805f9b34fb"
-DEVICE_NAME       = "Caterpillar"
+CHAR_UUID_ROBOTID = "0000fff1-0000-1000-8000-00805f9b34fb"
+DEVICE_NAME       = "Caterpillar"   # legacy name (fw < 1.5.0)
+DEVICE_PREFIX     = "Cat-"          # fleet naming: Cat-NN / Cat-XXXX
+MFG_COMPANY_ID    = 0xFFFF          # test company id in advertising data
 
 # Must match firmware (driver_pwm.h): nRF54 PWM cannot go below ~4 Hz
 FREQ_MIN = 4
@@ -54,21 +57,94 @@ def pack_u16(value: int) -> bytes:
     return struct.pack("<H", value)
 
 
-async def discover() -> str | None:
-    """Scan for the Caterpillar device and return its BLE address."""
-    print(f"Scanning for \"{DEVICE_NAME}\" ...", flush=True)
+def _is_caterpillar(name: str | None) -> bool:
+    return bool(name) and (name.startswith(DEVICE_PREFIX)
+                           or name == DEVICE_NAME)
 
-    device = await BleakScanner.find_device_by_filter(
-        lambda d, ad: d.name == DEVICE_NAME,
-        timeout=10.0,
-    )
 
-    if device is None:
-        print(f"Device \"{DEVICE_NAME}\" not found.", file=sys.stderr)
+async def scan_fleet(timeout: float = 6.0) -> list[dict]:
+    """Scan and return every visible Caterpillar with its identity.
+
+    Each entry: {name, address, robot_id, fw, session_active, rssi}.
+    robot_id/fw/session_active are None on legacy firmware (< 1.5.0,
+    no manufacturer data in the advertisement).
+    """
+    found: dict[str, dict] = {}
+
+    def on_adv(device, adv):
+        if not _is_caterpillar(device.name or adv.local_name):
+            return
+        info = {"name": device.name or adv.local_name,
+                "address": device.address,
+                "robot_id": None, "fw": None, "session_active": None,
+                "rssi": adv.rssi}
+        mfg = adv.manufacturer_data.get(MFG_COMPANY_ID)
+        if mfg and len(mfg) >= 5:
+            info["robot_id"] = mfg[0]
+            info["fw"] = f"{mfg[1]}.{mfg[2]}.{mfg[3]}"
+            info["session_active"] = bool(mfg[4] & 0x01)
+        found[device.address] = info
+
+    scanner = BleakScanner(on_adv)
+    await scanner.start()
+    await asyncio.sleep(timeout)
+    await scanner.stop()
+    return sorted(found.values(),
+                  key=lambda e: (e["robot_id"] is None,
+                                 e["robot_id"] or 0, e["name"]))
+
+
+def _fmt_robot(e: dict) -> str:
+    rid = "unassigned" if not e["robot_id"] else f"#{e['robot_id']}"
+    extra = f", fw {e['fw']}" if e["fw"] else ""
+    sess = ", LOGGING" if e["session_active"] else ""
+    return f"{e['name']} [{e['address']}] ({rid}{extra}{sess})"
+
+
+async def discover(robot: int | None = None,
+                   name: str | None = None) -> str | None:
+    """Find one Caterpillar and return its BLE address.
+
+    robot= selects by assigned fleet number, name= by exact adv name.
+    With neither, a single visible Caterpillar is used; several visible
+    is an error (the list is printed so you can pick with --robot).
+    """
+    what = (f"robot #{robot}" if robot is not None
+            else name if name else "any Caterpillar (Cat-*)")
+    print(f"Scanning for {what} ...", flush=True)
+
+    robots = await scan_fleet()
+    if robot is not None:
+        robots = [e for e in robots if e["robot_id"] == robot
+                  or e["name"] == f"Cat-{robot:02d}"]
+    elif name is not None:
+        robots = [e for e in robots if e["name"] == name]
+
+    if not robots:
+        print(f"No matching Caterpillar found ({what}).", file=sys.stderr)
+        return None
+    if len(robots) > 1:
+        print("Multiple Caterpillars visible - pick one with "
+              "--robot N or --name:", file=sys.stderr)
+        for e in robots:
+            print(f"  {_fmt_robot(e)}", file=sys.stderr)
         return None
 
-    print(f"Found {device.name} [{device.address}]")
-    return device.address
+    print(f"Found {_fmt_robot(robots[0])}")
+    return robots[0]["address"]
+
+
+async def set_robot_id(address: str, new_id: int):
+    """Assign the fleet robot number (persisted; adv name updates on
+    the next advertising start, i.e. after disconnect)."""
+    async with BleakClient(address,
+                           winrt=dict(use_cached_services=False)) as client:
+        await client.write_gatt_char(CHAR_UUID_ROBOTID, bytes([new_id]),
+                                     response=True)
+        print(f"Robot ID -> {new_id} "
+              f"(name becomes Cat-{new_id:02d} after disconnect)"
+              if new_id else
+              "Robot ID cleared (name reverts to Cat-XXXX after disconnect)")
 
 
 async def send_freq(client: BleakClient, hz: int, ack: bool):
@@ -376,7 +452,29 @@ async def main():
     parser.add_argument("--tput", metavar="KIB", type=int, nargs="?",
                         const=64, default=None,
                         help="BLE throughput test (default 64 KiB)")
+    parser.add_argument("--robot", type=int, default=None, metavar="N",
+                        help="Select fleet robot #N (adv name Cat-NN)")
+    parser.add_argument("--name", default=None,
+                        help="Select device by exact advertised name")
+    parser.add_argument("--scan", action="store_true",
+                        help="List all visible Caterpillars and exit")
+    parser.add_argument("--set-id", type=int, default=None, metavar="N",
+                        dest="set_id",
+                        help="Assign fleet robot number 1-20 (0 = clear)")
     args = parser.parse_args()
+
+    if args.scan:
+        robots = await scan_fleet()
+        if not robots:
+            print("No Caterpillars visible.")
+        for e in robots:
+            print(f"  {_fmt_robot(e)}")
+        return
+
+    if args.set_id is not None and not (0 <= args.set_id <= 20):
+        print(f"Robot ID out of range (0-20): {args.set_id}",
+              file=sys.stderr)
+        sys.exit(1)
 
     if args.freq is not None and not (FREQ_MIN <= args.freq <= FREQ_MAX):
         print(f"Frequency out of range ({FREQ_MIN}-{FREQ_MAX}): {args.freq}",
@@ -388,9 +486,13 @@ async def main():
               file=sys.stderr)
         sys.exit(1)
 
-    address = await discover()
+    address = await discover(robot=args.robot, name=args.name)
     if address is None:
         sys.exit(1)
+
+    if args.set_id is not None:
+        await set_robot_id(address, args.set_id)
+        return
 
     if args.dfu is not None:
         await dfu(address, args.dfu)

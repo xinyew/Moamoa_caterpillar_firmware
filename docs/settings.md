@@ -15,3 +15,4 @@ settings — the motor always boots off.  Source: `settings.yml`.
 | 6 | `imu_gyro_fs` | 0 | 0–3 | Gyro full-scale (0=±250 1=±500 2=±1000 3=±2000 dps) |
 | 7 | `preview_hz` | 0 | 0–6660 | Live-stream rate cap [Hz] (0 = auto/link budget) |
 | 8 | `led_enabled` | 1 | 0–1 | Heartbeat LED on/off |
+| 9 | `robot_id` | 0 | 0–20 | Fleet robot number (0 = unassigned; advertised as Cat-NN, unassigned robots show Cat-XXXX from the chip id) |

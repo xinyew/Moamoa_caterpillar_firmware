@@ -25,9 +25,9 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog,
-    QGridLayout, QGroupBox, QHBoxLayout, QLabel, QMainWindow,
-    QPlainTextEdit, QProgressBar, QPushButton, QSpinBox, QVBoxLayout,
-    QWidget,
+    QGridLayout, QGroupBox, QHBoxLayout, QInputDialog, QLabel,
+    QMainWindow, QPlainTextEdit, QProgressBar, QPushButton, QSpinBox,
+    QVBoxLayout, QWidget,
 )
 import pyqtgraph as pg
 import qasync
@@ -84,6 +84,7 @@ class BleWorker:
     def __init__(self, ui: "MainWindow"):
         self.ui = ui
         self.client: BleakClient | None = None
+        self.last_name: str | None = None
         self._dump_buf = bytearray()
         self._dump_expected = 0
         self._dump_done: asyncio.Event | None = None
@@ -92,14 +93,46 @@ class BleWorker:
     def connected(self) -> bool:
         return self.client is not None and self.client.is_connected
 
+    async def scan_fleet(self, timeout: float = 5.0) -> list[dict]:
+        """All visible Caterpillars: {name, address, robot_id, fw,
+        session_active, rssi} — identity fields None on legacy fw."""
+        found: dict[str, dict] = {}
+
+        def on_adv(device, adv):
+            name = device.name or adv.local_name
+            info = P.parse_adv(name, adv.manufacturer_data)
+            if info is None:
+                return
+            info.update(address=device.address, rssi=adv.rssi)
+            found[device.address] = info
+
+        scanner = BleakScanner(on_adv)
+        await scanner.start()
+        await asyncio.sleep(timeout)
+        await scanner.stop()
+        return sorted(found.values(),
+                      key=lambda e: (e["robot_id"] is None,
+                                     e["robot_id"] or 0, e["name"]))
+
     async def connect(self):
-        self.ui.log(f'Scanning for "{P.DEVICE_NAME}" ...')
-        dev = await BleakScanner.find_device_by_name(P.DEVICE_NAME,
-                                                     timeout=10.0)
+        self.ui.log(f'Scanning for Caterpillars ("{P.DEVICE_PREFIX}*") ...')
+        robots = await self.scan_fleet()
+        if not robots:
+            self.ui.log("No Caterpillar found.")
+            return False
+        target = robots[0] if len(robots) == 1 \
+            else self.ui.pick_robot(robots)
+        if target is None:
+            self.ui.log("Connect cancelled.")
+            return False
+        self.ui.log(f"Selected {target['name']} [{target['address']}]")
+        dev = await BleakScanner.find_device_by_address(target["address"],
+                                                        timeout=10.0)
         if dev is None:
-            self.ui.log("Device not found.")
+            self.ui.log("Device disappeared during scan.")
             return False
 
+        self.last_name = target["name"]
         # Windows caches GATT tables across firmware updates; don't.
         self.client = BleakClient(
             dev, disconnected_callback=self._on_disconnect,
@@ -163,6 +196,20 @@ class BleWorker:
         await self.client.write_gatt_char(P.UUID_LED, P.encode_onoff(on),
                                           response=True)
         self.ui.log(f"Heartbeat LED -> {'ON' if on else 'OFF'}")
+
+    async def set_robot_id(self, new_id: int):
+        await self.client.write_gatt_char(P.UUID_ROBOT_ID,
+                                          bytes([new_id]), response=True)
+        if new_id:
+            self.ui.log(f"Robot ID -> {new_id} (name becomes "
+                        f"Cat-{new_id:02d} after disconnect)")
+        else:
+            self.ui.log("Robot ID cleared (name reverts to Cat-XXXX "
+                        "after disconnect)")
+
+    async def read_robot_id(self) -> int:
+        data = await self.client.read_gatt_char(P.UUID_ROBOT_ID)
+        return data[0] if data else 0
 
     async def tput_test(self, kib: int = 64) -> float:
         """Send a bounded burst into the 0xFFE7 sink and measure what
@@ -395,13 +442,28 @@ class MainWindow(QMainWindow):
             "— includes lines from before this connection).")
         self.btn_devlog.clicked.connect(
             lambda: asyncio.ensure_future(self._read_devlog()))
+        self.spin_robot_id = QSpinBox()
+        self.spin_robot_id.setRange(0, 20)
+        self.spin_robot_id.setSpecialValueText("unassigned")
+        self.spin_robot_id.setToolTip(
+            "Fleet robot number: names the device Cat-NN so multiple "
+            "robots are tellable apart when scanning (0 = unassigned, "
+            "auto Cat-XXXX from chip id). Persisted on the robot; the "
+            "advertised name updates after disconnect.")
+        self.btn_robot_id = QPushButton("Assign ID")
+        self.btn_robot_id.clicked.connect(lambda: asyncio.ensure_future(
+            self.ble.set_robot_id(self.spin_robot_id.value())))
         cl.addWidget(self.btn_connect, 0, 0)
         cl.addWidget(self.lbl_conn, 0, 1)
         cl.addWidget(QLabel("Firmware:"), 1, 0)
         cl.addWidget(self.lbl_fw, 1, 1)
         cl.addWidget(self.chk_led, 2, 0)
         cl.addWidget(self.btn_tput, 2, 1)
-        cl.addWidget(self.btn_devlog, 3, 0, 1, 2)
+        cl.addWidget(self.btn_devlog, 3, 0)
+        rid = QHBoxLayout()
+        rid.addWidget(self.spin_robot_id, 1)
+        rid.addWidget(self.btn_robot_id)
+        cl.addLayout(rid, 3, 1)
         left.addWidget(conn_box)
 
         motor_box = QGroupBox("Motor")
@@ -562,6 +624,7 @@ class MainWindow(QMainWindow):
             self.cmb_afs, self.cmb_gfs, self.btn_apply,
             self.btn_log, self.btn_erase,
             self.cmb_sessions, self.btn_dump,
+            self.spin_robot_id, self.btn_robot_id,
         ]
         self._set_connected_ui(False)
 
@@ -574,6 +637,27 @@ class MainWindow(QMainWindow):
     def log(self, text: str):
         ts = time.strftime("%H:%M:%S")
         self.console.appendPlainText(f"[{ts}] {text}")
+
+    def pick_robot(self, robots: list[dict]) -> dict | None:
+        """Choose one of several visible Caterpillars.
+
+        Modal is safe here: connecting means we're disconnected, so
+        the status-poll timer isn't running (cf. _pick_file).
+        """
+        labels = []
+        for e in robots:
+            rid = "unassigned" if not e["robot_id"] else f"#{e['robot_id']}"
+            extra = (f", fw {'.'.join(map(str, e['fw']))}" if e["fw"]
+                     else "")
+            sess = ", LOGGING" if e["session_active"] else ""
+            labels.append(f"{e['name']}  ({rid}{extra}{sess})  "
+                          f"{e['rssi']} dBm")
+        choice, ok = QInputDialog.getItem(
+            self, "Select robot",
+            f"{len(robots)} Caterpillars visible:", labels, 0, False)
+        if not ok:
+            return None
+        return robots[labels.index(choice)]
 
     def on_disconnected(self):
         self.lbl_conn.setText("disconnected")
@@ -594,9 +678,15 @@ class MainWindow(QMainWindow):
         self.btn_connect.setEnabled(False)
         try:
             if await self.ble.connect():
-                self.lbl_conn.setText("connected")
+                self.lbl_conn.setText(
+                    f"connected: {self.ble.last_name or '?'}")
                 self.btn_connect.setText("Disconnect")
                 self._set_connected_ui(True)
+                try:
+                    self.spin_robot_id.setValue(
+                        await self.ble.read_robot_id())
+                except Exception:
+                    pass  # legacy firmware without 0xFFF1
                 self._status_timer.start()
                 await self._poll_status()
                 await self._refresh_sessions()

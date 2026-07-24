@@ -24,6 +24,9 @@ PREVIEW_HZ_DEFAULT = 0
 LED_ENABLED_MIN = 0
 LED_ENABLED_MAX = 1
 LED_ENABLED_DEFAULT = 1
+ROBOT_ID_MIN = 0
+ROBOT_ID_MAX = 20
+ROBOT_ID_DEFAULT = 0
 
 LIMITS = {
     "motor_freq_hz": (4, 1000, 150),
@@ -34,4 +37,5 @@ LIMITS = {
     "imu_gyro_fs": (0, 3, 0),
     "preview_hz": (0, 6660, 0),
     "led_enabled": (0, 1, 1),
+    "robot_id": (0, 20, 0),
 }

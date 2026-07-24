@@ -1,11 +1,28 @@
 # BLE Protocol Reference
 
-Device name: **`Caterpillar`** · single connection · no pairing/bonding
-(intentionally open research device).  All multi-byte fields are
-**little-endian**.  Authoritative implementations:
-`src/ble/ble_interface.c` (firmware) and `scripts/protocol.py`
-(host spec used by the GUI); `scripts/ble_control.py` carries its own
-inlined copies.  **Change the protocol → update all three.**
+Device name: **`Cat-NN`** (assigned fleet id) or **`Cat-XXXX`**
+(unassigned — last 4 hex digits of the chip's FICR device id, same
+self-naming scheme as biosensor-in-vivo) · single connection ·
+no pairing/bonding (intentionally open research device).  All
+multi-byte fields are **little-endian**.  Authoritative
+implementations: `src/ble/ble_interface.c` (firmware) and
+`scripts/protocol.py` (host spec used by the GUI);
+`scripts/ble_control.py` carries its own inlined copies.
+**Change the protocol → update all three.**
+
+## Advertising data (fleet identity, fw ≥ 1.5.0)
+
+Hosts can enumerate a fleet without connecting: `fleet.py scan`,
+`ble_control.py --scan`, or the GUI's connect picker match the name
+prefix `Cat-` and decode manufacturer data (test company id
+`0xFFFF`):
+
+| Off | Content |
+|---|---|
+| 0–1 | company id `0xFFFF` LE |
+| 2 | robot id (0 = unassigned) |
+| 3–5 | app fw major/minor/patch |
+| 6 | flags: bit0 = log session active |
 
 ## Services
 
@@ -37,6 +54,7 @@ Write Without Response.
 | 0xFFEE | write+read | Wall-clock sync: write u32 unix epoch (UTC); read device epoch estimate (0 = never synced since boot) |
 | 0xFFEF | read | Session directory (below) |
 | 0xFFF0 | read | Tier-2 log: last 2 KB of warning/error lines (uptime-stamped text; includes history from before the connection) |
+| 0xFFF1 | write+read | Fleet robot id, u8 0–20 (0 = unassigned; persisted; advertised name updates on the next adv restart, i.e. after disconnect) |
 
 ## Status packet (0xFFE6 read, 44 B, version 3)
 
@@ -53,7 +71,7 @@ Write Without Response.
 | 20 | u32 | boot reset cause (Zephyr hwinfo bits) |
 | 24 | u32 | FLPR fw version `0x00MMmmpp` (0 = FLPR not running) |
 | 28, 29 | u8 | IMU ODR code, content mask |
-| 30, 31 | u8 | log active, log policy (always 1 = circular) |
+| 30, 31 | u8 | log active; byte 31: bit0 log policy (always 1 = circular), bit1 session is detached |
 | 32 | u32 | current/last session bytes stored |
 | 36 | u32 | log capacity bytes (695 648 = 43 478 records) |
 | 40 | u32 | FLPR ring overruns since boot |
@@ -105,7 +123,9 @@ the host must come from `seq16 / ODR`, **not** packet arrival time
 ## Log control (0xFFEA)
 
 Write: `{cmd u8, arg u8}` — cmd 0 = stop, 1 = start (arg ignored;
-storage is always circular), 2 = erase all sessions.
+storage is always circular), 2 = erase all sessions, 3 = start
+**detached** (fleet mode: the session keeps logging after the host
+disconnects; stop it on a later connection with cmd 0).
 Read 20 B: `{active u8, policy u8, rsvd u16, bytes_stored u32,
 capacity u32, records_total u32, overruns u32}`.
 
@@ -115,7 +135,10 @@ and the directory.  Stop can take up to ~1 s (flash-writer drain) —
 hosts should settle before refreshing 0xFFEF.  The same applies to
 VDC writes (0xFFE2): the ramp runs in the background at 10 ms/tap.
 
-A running session is auto-stopped by BLE disconnect.
+A running session is auto-stopped by BLE disconnect — unless it was
+started with cmd 3 (detached), in which case it survives disconnects
+and reboots of the host; the advertising flag (bit0 of the mfg-data
+flags byte) shows it running from the outside.
 
 ## Session directory (0xFFEF read)
 
@@ -142,7 +165,8 @@ Effective rate ≈ 18–24 KiB/s.
 
 ## Host session flow (what the GUI does)
 
-1. Scan by name, connect with GATT cache disabled
+1. Scan by the `Cat-` name prefix (picker when several are visible),
+   connect with GATT cache disabled
    (`winrt=dict(use_cached_services=False)` — Windows serves stale
    tables after OTAs otherwise), subscribe 0xFFEC + 0xFFEB.
 2. Write 0xFFEE with the current unix time (timestamps for sessions).

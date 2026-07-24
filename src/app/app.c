@@ -1,5 +1,5 @@
 ﻿/*
- * Application lifecycle â€” boot sequence + health monitor.
+ * Application lifecycle — boot sequence + health monitor.
  *
  * Boot leaves the motor idle (rail off, driver asleep, duty 0): every
  * run is started explicitly over BLE by the GUI or script.  IMU
@@ -39,7 +39,7 @@ void app_init(void)
 {
     printk("\n=== Caterpillar Boot ===\n");
 
-    /* Announce why we booted â€” makes brown-out reset loops visible.
+    /* Announce why we booted — makes brown-out reset loops visible.
      * Kept in app_reset_cause for the BLE status characteristic.
      */
     if (hwinfo_get_reset_cause(&app_reset_cause) == 0) {
@@ -55,7 +55,7 @@ void app_init(void)
     /* Persisted settings (registry generated from settings.yml) */
     settings_store_init();
 
-    /* Status LED on â€” power/boot indicator until the heartbeat starts */
+    /* Status LED on — power/boot indicator until the heartbeat starts */
     if (drv_led_init() < 0) {
         LOG_ERR("Failed to init status LED");
     }
@@ -68,7 +68,7 @@ void app_init(void)
         LOG_ERR("Failed to init VDC sense");
     }
 
-    /* MAX5419LETA digipot â€” pre-program the persisted VDC before any
+    /* MAX5419LETA digipot — pre-program the persisted VDC before any
      * enable (never the digipot's power-on default of ~1.0 V)
      */
     float vdc_v = (float)settings_get(SETTING_MOTOR_VDC_MV) / 1000.0f;
@@ -88,7 +88,7 @@ void app_init(void)
         LOG_ERR("Failed to init PWM");
     }
 
-    /* Prime the drive waveform at 50 % duty (the fixed drive scheme â€”
+    /* Prime the drive waveform at 50 % duty (the fixed drive scheme —
      * amplitude is controlled via VDC, frequency via 0xFFE1).  With the
      * rail off and the driver asleep this moves nothing; enabling them
      * over BLE starts the motor.  Without this, duty stays 0 and the
@@ -103,7 +103,7 @@ void app_init(void)
     }
     (void)imu_pump_init();
 
-    /* BLE GATT server â€” full control + data surface */
+    /* BLE GATT server — full control + data surface */
     if (ble_interface_init() < 0) {
         LOG_ERR("Failed to init BLE");
     }
@@ -115,7 +115,7 @@ void app_init(void)
             APP_VERSION_MAJOR, APP_VERSION_MINOR, APP_PATCHLEVEL,
             app_reset_cause);
 
-    /* Alive indicator: 3 Ã— 3 ms flashes per second (timer-driven) */
+    /* Alive indicator: 3 × 3 ms flashes per second (timer-driven) */
     drv_led_blink_start();
     if (settings_get(SETTING_LED_ENABLED) == 0) {
         drv_led_set_enabled(false);
@@ -178,7 +178,7 @@ void app_run(void)
                 last_warn = now;
                 ble_msg("IMU init failed (WHO_AM_I=0x%02x)", sh->whoami);
             } else if (drained == last_drained && session_imu_demand()) {
-                /* Stalled only counts when something WANTS data â€”
+                /* Stalled only counts when something WANTS data —
                  * idle (powered-down) sampling is normal
                  */
                 last_warn = now;

@@ -1,5 +1,5 @@
 ﻿/*
- * Session orchestration â€” see session.h.
+ * Session orchestration — see session.h.
  * Logic moved from ble_interface.c in the app/adapter split.
  */
 
@@ -98,13 +98,16 @@ void session_on_log_stopped(void)
 
 void session_on_disconnect(void)
 {
-    /* Stop per-connection data flows (CCC state is not bonded) and
-     * close a running log session â€” a session ends at the stop click
-     * or at connection loss, whichever comes first.
+    /* Stop per-connection data flows (CCC state is not bonded).
+     * A normal session is closed by disconnect; a DETACHED session
+     * (fleet mode) keeps logging untethered — the sampling arbiter
+     * keeps the sensor running because imu_log_active() stays true.
      */
     stream_active = false;
     ble_transport_stream_enable(false);
     ble_transport_dump_abort();
-    imu_log_stop();
+    if (!imu_log_detached()) {
+        imu_log_stop();
+    }
     session_imu_run_update();
 }

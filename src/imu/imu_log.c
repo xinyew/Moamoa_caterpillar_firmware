@@ -1,5 +1,5 @@
 ﻿/*
- * Multi-session IMU sample log in RRAM â€” see imu_log.h.
+ * Multi-session IMU sample log in RRAM — see imu_log.h.
  *
  * Physical layout (absolute flash offsets):
  *   0xB9000..0xBA000   RESERVED, never written: MCUboot reads the
@@ -18,7 +18,7 @@
  *
  * The ex-FLPR region at 0x165000 is deliberately NOT used: the app
  * core's flash device (cpuapp_rram) ends at 0x165000, so every access
- * beyond it fails with -EINVAL â€” writes there were silently lost and
+ * beyond it fails with -EINVAL — writes there were silently lost and
  * dump reads wedged at the boundary (verified on hardware, "stuck at
  * 78-83%").  Extending the device range would change the partition
  * map and break OTA compatibility; 679 KB in-range is the honest size.
@@ -73,7 +73,7 @@ BUILD_ASSERT(sizeof(struct dir_meta) == ENTRY_SIZE);
 #define DATA_BASE       (DIR_BASE + DIR_BYTES)
 
 /* Every flash op waits for an MPSL radio timeslot
- * (SOC_FLASH_NRF_RADIO_SYNC_MPSL) â€” measured ~30 ms per call while
+ * (SOC_FLASH_NRF_RADIO_SYNC_MPSL) — measured ~30 ms per call while
  * BLE streams.  Writes therefore run in a dedicated writer thread fed
  * from a big SRAM staging ring, in 4 KB batches so one timeslot wait
  * amortizes over 256 records.  The pump-side append is a pure memcpy.
@@ -103,6 +103,7 @@ static uint32_t total_abs;       /* records ever written (ring position) */
 static uint32_t seq_next = 1;
 
 static bool     active;
+static bool     session_detached;
 static uint32_t cur_seq;
 static uint32_t cur_start;       /* absolute */
 static uint32_t cur_count;
@@ -114,7 +115,7 @@ static uint32_t last_dir_refresh;
  */
 static struct imu_sample stage[STAGE_N];
 static volatile uint32_t stage_head, stage_tail;
-static uint32_t log_dropped;         /* staged ring full â€” samples lost */
+static uint32_t log_dropped;         /* staged ring full — samples lost */
 static struct imu_sample batch[BATCH_RECS];
 static K_SEM_DEFINE(writer_wake, 0, 1);
 
@@ -190,7 +191,7 @@ static void invalidate_consumed(void)
         }
         if (e.start_rec < floor) {
             entry_invalidate(i);
-            ble_msg("session #%u overwritten by session #%u â€” removed",
+            ble_msg("session #%u overwritten by session #%u — removed",
                     e.seq, cur_seq);
         }
     }
@@ -364,7 +365,7 @@ int imu_log_start(uint8_t policy)
     stage_tail = stage_head;     /* discard any stale staged records */
     log_dropped = 0;
 
-    /* Stamp the header from the persisted settings â€” the shared block
+    /* Stamp the header from the persisted settings — the shared block
      * may still read content=0 at this instant (on-demand sampling is
      * enabled right after start).
      */
@@ -389,7 +390,7 @@ int imu_log_start(uint8_t policy)
     }
 
     /* Reusing this directory slot means its 16-sessions-ago occupant
-     * disappears from the list too â€” surface that like an overwrite.
+     * disappears from the list too — surface that like an overwrite.
      */
     active = true;
     k_mutex_unlock(&log_lock);
@@ -409,6 +410,7 @@ void imu_log_stop(void)
     k_mutex_lock(&log_lock, K_FOREVER);
     if (active) {
         active = false;
+        session_detached = false;
         dir_refresh_current(true);
         LOG_INF("IMU log session %u stop: %u records (%u dropped)",
                 cur_seq, cur_count, log_dropped);
@@ -431,6 +433,9 @@ void imu_log_erase(void)
 
 bool imu_log_active(void)             { return active; }
 uint8_t imu_log_policy(void)          { return IMU_LOG_POLICY_CIRCULAR; }
+
+void imu_log_mark_detached(void)      { session_detached = true; }
+bool imu_log_detached(void)           { return active && session_detached; }
 uint32_t imu_log_capacity_bytes(void) { return DATA_CAPACITY; }
 
 uint32_t imu_log_bytes_stored(void)
@@ -448,12 +453,12 @@ void imu_log_append(const struct imu_sample *s, uint32_t n)
         return;
     }
 
-    /* Pump context: stage only â€” no mutex, no flash, no blocking.
+    /* Pump context: stage only — no mutex, no flash, no blocking.
      * The writer thread persists in radio-timeslot-friendly batches.
      */
     for (uint32_t i = 0; i < n; i++) {
         if (stage_head - stage_tail >= STAGE_N) {
-            log_dropped++;           /* flash can't keep up â€” counted */
+            log_dropped++;           /* flash can't keep up — counted */
             continue;
         }
         stage[stage_head % STAGE_N] = s[i];

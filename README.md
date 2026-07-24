@@ -48,7 +48,19 @@ python scripts/ble_control.py --dfu build/Moamoa_caterpillar_firmware/zephyr/zep
 # GUI (motor, IMU config, live plots, session dump/viewer)
 pip install -r scripts/requirements.txt
 python scripts/caterpillar_gui.py
+
+# fleet of robots (fw >= 1.5.0): name them, log untethered, harvest
+python scripts/fleet.py scan                  # who's out there
+python scripts/fleet.py assign 3              # one visible robot -> Cat-03
+python scripts/fleet.py deploy --robots 1,2,3 # detached sessions, then disconnect
+python scripts/fleet.py collect --all -o data # stop + dump newest session each
 ```
+
+Robots self-name as `Cat-XXXX` (last 4 hex digits of the chip id)
+until assigned a fleet number (`Cat-NN`, persisted, settable from the
+GUI or `fleet.py assign` / `ble_control.py --set-id`).  Detached
+sessions keep logging while no host is connected; the advertisement
+shows id, firmware and session state without connecting.
 
 Bump `VERSION` per release and `flpr/VERSION` on FLPR changes —
 `--read` reports both running versions.  An OTA wipes stored log

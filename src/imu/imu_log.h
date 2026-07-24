@@ -50,6 +50,14 @@ void imu_log_erase(void);            /* wipe the whole directory */
 
 bool     imu_log_active(void);
 uint8_t  imu_log_policy(void);
+
+/* Detached sessions (fleet mode): survive BLE disconnect and keep
+ * logging untethered until an explicit stop.  Mark right after a
+ * successful start; cleared by stop.
+ */
+void imu_log_mark_detached(void);
+bool imu_log_detached(void);
+
 uint32_t imu_log_capacity_bytes(void);
 uint32_t imu_log_bytes_stored(void);     /* current/last session bytes */
 uint32_t imu_log_records_total(void);    /* current/last session records */

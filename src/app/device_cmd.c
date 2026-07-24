@@ -1,5 +1,5 @@
 ﻿/*
- * Command work-queue â€” see device_cmd.h.
+ * Command work-queue — see device_cmd.h.
  */
 
 #include "device_cmd.h"
@@ -52,6 +52,12 @@ static void execute(const struct device_cmd *cmd)
             break;
         case DEVICE_LOG_OP_START:
             if (imu_log_start(1) == 0) {
+                session_on_log_started();
+            }
+            break;
+        case DEVICE_LOG_OP_START_DETACHED:
+            if (imu_log_start(1) == 0) {
+                imu_log_mark_detached();
                 session_on_log_started();
             }
             break;

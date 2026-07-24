@@ -1,5 +1,5 @@
 /* AUTO-GENERATED from settings.yml — do not edit; run scripts/generate_settings.py */
-/* settings.yml sha1: 0740809ab39e3361095de2d267e4ef8b4a3eb016 */
+/* settings.yml sha1: 5fc797296a1700336b302b0406dde089263689e1 */
 #ifndef SETTINGS_GEN_H
 #define SETTINGS_GEN_H
 
@@ -13,9 +13,10 @@
 #define SETTING_IMU_GYRO_FS          6
 #define SETTING_PREVIEW_HZ           7
 #define SETTING_LED_ENABLED          8
+#define SETTING_ROBOT_ID             9
 
-#define SETTINGS_COUNT 8
-#define SETTINGS_MAX_ID 8
+#define SETTINGS_COUNT 9
+#define SETTINGS_MAX_ID 9
 
 struct setting_meta {
     uint8_t  id;
@@ -34,6 +35,7 @@ struct setting_meta {
     { 6, "imu_gyro_fs", 0, 0, 3 }, \
     { 7, "preview_hz", 0, 0, 6660 }, \
     { 8, "led_enabled", 1, 0, 1 }, \
+    { 9, "robot_id", 0, 0, 20 }, \
 }
 
 #endif /* SETTINGS_GEN_H */

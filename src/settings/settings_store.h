@@ -18,5 +18,6 @@
 void settings_store_init(void);
 uint16_t settings_get(uint8_t id);
 void settings_set(uint8_t id, uint16_t value);
+uint16_t settings_max(uint8_t id);   /* registry max (0 if unknown id) */
 
 #endif /* SETTINGS_STORE_H */

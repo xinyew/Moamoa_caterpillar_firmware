@@ -1,5 +1,5 @@
 ﻿/*
- * BLE control-plane adapter â€” GATT service + connection lifecycle.
+ * BLE control-plane adapter — GATT service + connection lifecycle.
  *
  * Handlers here only DECODE and DELEGATE: fast driver pokes run
  * inline, slow operations go to device_cmd, run-state policy to
@@ -7,11 +7,11 @@
  * file may block the BT RX thread.
  *
  * Wire contract (details in docs/ble-protocol.md):
- *   0xFFE1 write freq Â· 0xFFE2 write VDC Â· 0xFFE3 read measured VDC
- *   0xFFE4 write rail Â· 0xFFE5 write driver Â· 0xFFE6 read status v3
- *   0xFFE7 throughput sink Â· 0xFFE8 IMU config Â· 0xFFE9 stream notify
- *   0xFFEA log control Â· 0xFFEB dump Â· 0xFFEC messages Â· 0xFFED LED
- *   0xFFEE time sync Â· 0xFFEF session dir Â· 0xFFF0 tier-2 log
+ *   0xFFE1 write freq · 0xFFE2 write VDC · 0xFFE3 read measured VDC
+ *   0xFFE4 write rail · 0xFFE5 write driver · 0xFFE6 read status v3
+ *   0xFFE7 throughput sink · 0xFFE8 IMU config · 0xFFE9 stream notify
+ *   0xFFEA log control · 0xFFEB dump · 0xFFEC messages · 0xFFED LED
+ *   0xFFEE time sync · 0xFFEF session dir · 0xFFF0 tier-2 log
  * Writes accept acknowledged Write Requests and Write-Without-Response.
  */
 
@@ -44,16 +44,69 @@
 LOG_MODULE_REGISTER(ble_if, LOG_LEVEL_INF);
 
 /* -------------------------------------------------------------------------- */
-/*  Advertising data                                                          */
+/*  Advertising data — fleet identity                                         */
+/*                                                                            */
+/*  Name: "Cat-NN" (assigned robot_id setting) or "Cat-XXXX" (last 4          */
+/*  hex digits of the FICR device id while unassigned).  Manufacturer data    */
+/*  (test company id 0xFFFF) lets a fleet host enumerate robots, fw           */
+/*  versions and session state WITHOUT connecting:                            */
+/*    [0..1] 0xFFFF LE   [2] robot_id   [3..5] fw maj/min/patch               */
+/*    [6] flags: bit0 = log session active                                    */
 /* -------------------------------------------------------------------------- */
 
-static const struct bt_data ad[] = {
-    BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
-    BT_DATA(BT_DATA_NAME_COMPLETE, "Caterpillar", sizeof("Caterpillar") - 1),
-};
+#include <zephyr/drivers/hwinfo.h>
+#include <stdio.h>
+#include <string.h>
+
+static char adv_name[12];
+static uint8_t adv_mfg[7];
+static struct bt_data ad[3];
+
+/* Rebuilt before every advertising (re)start so the name and session
+ * flag are current.
+ */
+static void build_ad(void)
+{
+    uint16_t id = settings_get(SETTING_ROBOT_ID);
+
+    if (id > 0) {
+        snprintf(adv_name, sizeof(adv_name), "Cat-%02u", id);
+    } else {
+        /* Self-name from the permanent FICR device id — same scheme
+         * as biosensor-in-vivo ("bs-%04X" from EUI64 low 16 bits):
+         * the last 4 hex digits of the unique id, verbatim, so the
+         * suffix matches what nrfjprog/J-Link print for the chip.
+         */
+        uint8_t uid[8] = {0};
+        ssize_t n = hwinfo_get_device_id(uid, sizeof(uid));
+
+        if (n >= 2) {
+            snprintf(adv_name, sizeof(adv_name), "Cat-%02X%02X",
+                     uid[n - 2], uid[n - 1]);
+        } else {
+            snprintf(adv_name, sizeof(adv_name), "Cat-????");
+        }
+    }
+    (void)bt_set_name(adv_name);
+
+    adv_mfg[0] = 0xFF;
+    adv_mfg[1] = 0xFF;
+    adv_mfg[2] = (uint8_t)id;
+    adv_mfg[3] = APP_VERSION_MAJOR;
+    adv_mfg[4] = APP_VERSION_MINOR;
+    adv_mfg[5] = APP_PATCHLEVEL;
+    adv_mfg[6] = imu_log_active() ? 1 : 0;
+
+    ad[0] = (struct bt_data)BT_DATA_BYTES(BT_DATA_FLAGS,
+                (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR));
+    ad[1] = (struct bt_data)BT_DATA(BT_DATA_NAME_COMPLETE,
+                adv_name, strlen(adv_name));
+    ad[2] = (struct bt_data)BT_DATA(BT_DATA_MANUFACTURER_DATA,
+                adv_mfg, sizeof(adv_mfg));
+}
 
 /* -------------------------------------------------------------------------- */
-/*  Motor characteristics (0xFFE1â€“0xFFE5)                                     */
+/*  Motor characteristics (0xFFE1–0xFFE5)                                     */
 /* -------------------------------------------------------------------------- */
 
 static ssize_t on_freq_write(struct bt_conn *conn,
@@ -231,7 +284,7 @@ static ssize_t on_status_read(struct bt_conn *conn,
     s[28] = IMU_SHARED->cfg_odr;
     s[29] = IMU_SHARED->cfg_content;
     s[30] = imu_log_active() ? 1 : 0;
-    s[31] = imu_log_policy();
+    s[31] = imu_log_policy() | (imu_log_detached() ? 0x02 : 0);
     sys_put_le32(imu_log_bytes_stored(), &s[32]);
     sys_put_le32(imu_log_capacity_bytes(), &s[36]);
     sys_put_le32(imu_pump_overrun(), &s[40]);
@@ -441,15 +494,16 @@ static ssize_t on_logctl_write(struct bt_conn *conn,
 
     const uint8_t *p = buf;
 
-    if (p[0] > DEVICE_LOG_OP_ERASE) {
+    if (p[0] > DEVICE_LOG_OP_START_DETACHED) {
         return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
     }
-    if (p[0] == DEVICE_LOG_OP_START && imu_log_active()) {
+    if ((p[0] == DEVICE_LOG_OP_START ||
+         p[0] == DEVICE_LOG_OP_START_DETACHED) && imu_log_active()) {
         return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
     }
 
     /* Stop waits up to ~1 s for the flash writer to drain and erase
-     * does timeslot-synced flash writes â€” both far too slow for the
+     * does timeslot-synced flash writes — both far too slow for the
      * BT RX thread.  Validate, enqueue, ack; the status poll and the
      * session directory reflect completion.
      */
@@ -513,7 +567,7 @@ static ssize_t on_dir_read(struct bt_conn *conn,
 }
 
 /* -------------------------------------------------------------------------- */
-/*  Dump request (0xFFEB write) â€” chunks flow from ble_transport              */
+/*  Dump request (0xFFEB write) — chunks flow from ble_transport              */
 /* -------------------------------------------------------------------------- */
 
 static ssize_t on_dump_write(struct bt_conn *conn,
@@ -532,6 +586,44 @@ static ssize_t on_dump_write(struct bt_conn *conn,
     ble_transport_dump_request(sys_get_le32(&p[0]), sys_get_le32(&p[4]),
                                sys_get_le32(&p[8]));
     return len;
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Robot id (0xFFF1) — fleet identity, persisted                             */
+/* -------------------------------------------------------------------------- */
+
+static ssize_t on_robotid_write(struct bt_conn *conn,
+                                const struct bt_gatt_attr *attr,
+                                const void *buf, uint16_t len,
+                                uint16_t offset, uint8_t flags)
+{
+    ARG_UNUSED(conn); ARG_UNUSED(attr); ARG_UNUSED(flags);
+
+    if (len != 1 || offset != 0) {
+        return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
+    }
+
+    uint8_t id = *(const uint8_t *)buf;
+
+    if (id > settings_max(SETTING_ROBOT_ID)) {
+        return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
+    }
+
+    settings_set(SETTING_ROBOT_ID, id);
+    /* The advertised name updates on the next advertising restart
+     * (i.e. after this connection closes).
+     */
+    LOG_INF("BLE: robot id -> %u", id);
+    return len;
+}
+
+static ssize_t on_robotid_read(struct bt_conn *conn,
+                               const struct bt_gatt_attr *attr,
+                               void *buf, uint16_t len, uint16_t offset)
+{
+    uint8_t v = (uint8_t)settings_get(SETTING_ROBOT_ID);
+
+    return bt_gatt_attr_read(conn, attr, buf, len, offset, &v, sizeof(v));
 }
 
 /* -------------------------------------------------------------------------- */
@@ -622,6 +714,10 @@ BT_GATT_SERVICE_DEFINE(caterpillar_svc,
         BT_GATT_CHRC_READ,
         BT_GATT_PERM_READ,
         on_t2log_read, NULL, NULL),
+    BT_GATT_CHARACTERISTIC(BT_UUID_CATERPILLAR_ROBOTID,
+        BT_GATT_CHRC_READ | BT_GATT_CHRC_WRITE | BT_GATT_CHRC_WRITE_WITHOUT_RESP,
+        BT_GATT_PERM_READ | BT_GATT_PERM_WRITE,
+        on_robotid_read, on_robotid_write, NULL),
 );
 
 /* -------------------------------------------------------------------------- */
@@ -652,6 +748,7 @@ void ble_conn_request_params(bool slow)
 static void restart_advertise(struct k_work *work)
 {
     ARG_UNUSED(work);
+    build_ad();      /* pick up robot_id / session-state changes */
     int ret = bt_le_adv_start(&adv_param, ad, ARRAY_SIZE(ad), NULL, 0);
 
     if (ret) {
@@ -668,7 +765,7 @@ static void connected(struct bt_conn *conn, uint8_t err)
     if (err) {
         LOG_ERR("BLE connection failed: %u", err);
         /* Advertising already stopped, and disconnected() will not
-         * fire for a connection that never established â€” re-advertise
+         * fire for a connection that never established — re-advertise
          * or the device stays unreachable until reboot.
          */
         k_work_schedule(&adv_restart_work, K_MSEC(50));
@@ -681,7 +778,7 @@ static void connected(struct bt_conn *conn, uint8_t err)
     /* Request low-latency connection params (7.5 ms interval) */
     ble_conn_request_params(false);
 
-    /* Request 2M PHY â€” doubles air throughput if the central agrees */
+    /* Request 2M PHY — doubles air throughput if the central agrees */
     int perr = bt_conn_le_phy_update(conn, BT_CONN_LE_PHY_PARAM_2M);
 
     if (perr) {
@@ -697,7 +794,7 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 
     session_on_disconnect();
 
-    /* Defer re-advertise â€” bt_le_adv_start must not be called
+    /* Defer re-advertise — bt_le_adv_start must not be called
      * synchronously from the BLE stack's own callback context.
      */
     k_work_schedule(&adv_restart_work, K_MSEC(50));
@@ -726,12 +823,13 @@ int ble_interface_init(void)
 
     bt_conn_cb_register(&conn_callbacks);
 
-    /* Start connectable advertising â€” fast interval for quick discovery */
+    /* Start connectable advertising — fast interval for quick discovery */
     adv_param = (struct bt_le_adv_param)BT_LE_ADV_PARAM_INIT(
         BT_LE_ADV_OPT_CONN,
         BT_GAP_ADV_FAST_INT_MIN_1,
         BT_GAP_ADV_FAST_INT_MAX_1,
         NULL);
+    build_ad();
     ret = bt_le_adv_start(&adv_param, ad, ARRAY_SIZE(ad), NULL, 0);
     if (ret) {
         LOG_ERR("BLE advertising start failed: %d", ret);

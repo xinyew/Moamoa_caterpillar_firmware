@@ -23,9 +23,10 @@ enum device_cmd_type {
 };
 
 /* DEVICE_CMD_LOG operations (wire values of the 0xFFEA command byte) */
-#define DEVICE_LOG_OP_STOP   0
-#define DEVICE_LOG_OP_START  1
-#define DEVICE_LOG_OP_ERASE  2
+#define DEVICE_LOG_OP_STOP            0
+#define DEVICE_LOG_OP_START           1
+#define DEVICE_LOG_OP_ERASE           2
+#define DEVICE_LOG_OP_START_DETACHED  3   /* session survives disconnect */
 
 struct device_cmd {
     uint8_t type;

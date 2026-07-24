@@ -139,6 +139,13 @@ void settings_store_init(void)
     loaded = true;
 }
 
+uint16_t settings_max(uint8_t id)
+{
+    const struct setting_meta *m = meta_for(id);
+
+    return m ? m->max : 0;
+}
+
 uint16_t settings_get(uint8_t id)
 {
     const struct setting_meta *m = meta_for(id);

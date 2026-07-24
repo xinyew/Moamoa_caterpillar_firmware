@@ -10,7 +10,32 @@ from __future__ import annotations
 import struct
 from dataclasses import dataclass
 
-DEVICE_NAME = "Caterpillar"
+DEVICE_NAME = "Caterpillar"        # legacy (fw < 1.5.0)
+DEVICE_PREFIX = "Cat-"             # fleet naming: Cat-NN / Cat-XXXX
+MFG_COMPANY_ID = 0xFFFF            # test id used in advertising data
+
+
+def is_caterpillar(name: str | None) -> bool:
+    return bool(name) and (name.startswith(DEVICE_PREFIX)
+                           or name == DEVICE_NAME)
+
+
+def parse_adv(name: str | None, manufacturer_data: dict) -> dict | None:
+    """Decode fleet identity from advertising data.
+
+    Returns {name, robot_id, fw, session_active} or None if this is
+    not a Caterpillar.  Legacy firmware advertises no mfg data.
+    """
+    if not is_caterpillar(name):
+        return None
+    info = {"name": name, "robot_id": None, "fw": None,
+            "session_active": None}
+    payload = manufacturer_data.get(MFG_COMPANY_ID)
+    if payload and len(payload) >= 5:
+        info["robot_id"] = payload[0]
+        info["fw"] = (payload[1], payload[2], payload[3])
+        info["session_active"] = bool(payload[4] & 0x01)
+    return info
 
 
 def _u16(val: int) -> str:
@@ -33,6 +58,7 @@ UUID_LED = _u16(0xFFED)       # write u8 / read u8: heartbeat LED enable
 UUID_TIME = _u16(0xFFEE)      # write u32 LE unix epoch / read device epoch
 UUID_DIR = _u16(0xFFEF)       # read: session directory (newest first)
 UUID_T2LOG = _u16(0xFFF0)     # read: last 2 KB of device log lines (text)
+UUID_ROBOT_ID = _u16(0xFFF1)  # write u8 / read u8: fleet robot number
 
 # Limits come from the generated registry (settings.yml is the single
 # source of truth — run scripts/generate_settings.py after edits)
@@ -62,6 +88,7 @@ LOG_POLICY_CIRCULAR = 1
 LOG_CMD_STOP = 0
 LOG_CMD_START = 1
 LOG_CMD_ERASE = 2
+LOG_CMD_START_DETACHED = 3   # session survives disconnect (fleet mode)
 
 LOG_HDR_MAGIC = 0x31474C43  # "CLG1"
 LOG_HDR_SIZE = 32
