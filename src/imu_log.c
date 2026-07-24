@@ -90,12 +90,10 @@ static uint32_t total_abs;       /* records ever written (ring position) */
 static uint32_t seq_next = 1;
 
 static bool     active;
-static uint8_t  cur_policy;
 static uint32_t cur_seq;
 static uint32_t cur_start;       /* absolute */
 static uint32_t cur_count;
 static uint32_t cur_slot;
-static uint32_t cur_limit;       /* stop-when-full: absolute stop point */
 static uint32_t last_dir_refresh;
 
 static uint8_t  accum[ACCUM_BYTES];
@@ -156,7 +154,9 @@ static uint32_t ring_floor(void)
     return (total_abs > REC_CAPACITY) ? total_abs - REC_CAPACITY : 0;
 }
 
-/* Drop directory entries whose data has been (partly) overwritten */
+/* Drop directory entries whose data the write head has reached; the
+ * BLE message makes the removal visible in the GUI console.
+ */
 static void invalidate_consumed(void)
 {
     uint32_t floor = ring_floor();
@@ -171,9 +171,9 @@ static void invalidate_consumed(void)
             continue;
         }
         if (e.start_rec < floor) {
-            LOG_INF("session %u overwritten — dropped from directory",
-                    e.seq);
             entry_invalidate(i);
+            ble_msg("session #%u overwritten by session #%u — removed",
+                    e.seq, cur_seq);
         }
     }
 }
@@ -293,9 +293,7 @@ int imu_log_init(void)
 
 int imu_log_start(uint8_t policy)
 {
-    if (policy > IMU_LOG_POLICY_CIRCULAR) {
-        return -EINVAL;
-    }
+    ARG_UNUSED(policy);   /* storage is always circular */
 
     k_mutex_lock(&log_lock, K_FOREVER);
     if (active) {
@@ -309,20 +307,8 @@ int imu_log_start(uint8_t policy)
     cur_slot = (cur_seq - 1) % IMU_LOG_MAX_SESSIONS;
     cur_start = total_abs;
     cur_count = 0;
-    cur_policy = policy;
     last_dir_refresh = 0;
     accum_fill = 0;
-
-    /* Stop-when-full: never destroy the oldest surviving session */
-    uint32_t oldest = cur_start;
-    for (uint32_t i = 0; i < IMU_LOG_MAX_SESSIONS; i++) {
-        struct dir_entry e;
-        if (i != cur_slot && entry_read(i, &e) == 0 &&
-            e.magic == ENTRY_MAGIC && e.start_rec < oldest) {
-            oldest = e.start_rec;
-        }
-    }
-    cur_limit = oldest + REC_CAPACITY;
 
     struct dir_entry e = {
         .magic = ENTRY_MAGIC,
@@ -334,7 +320,7 @@ int imu_log_start(uint8_t policy)
         .content = sh->cfg_content,
         .accel_fs = sh->cfg_accel_fs,
         .gyro_fs = sh->cfg_gyro_fs,
-        .policy = policy,
+        .policy = IMU_LOG_POLICY_CIRCULAR,
         .open = 1,
     };
     int ret = entry_write(cur_slot, &e);
@@ -344,10 +330,12 @@ int imu_log_start(uint8_t policy)
         return ret;
     }
 
+    /* Reusing this directory slot means its 16-sessions-ago occupant
+     * disappears from the list too — surface that like an overwrite.
+     */
     active = true;
     k_mutex_unlock(&log_lock);
-    LOG_INF("IMU log session %u start (policy %u, wall %u)",
-            cur_seq, policy, e.wall_start);
+    LOG_INF("IMU log session %u start (wall %u)", cur_seq, e.wall_start);
     return 0;
 }
 
@@ -377,7 +365,7 @@ void imu_log_erase(void)
 }
 
 bool imu_log_active(void)             { return active; }
-uint8_t imu_log_policy(void)          { return cur_policy; }
+uint8_t imu_log_policy(void)          { return IMU_LOG_POLICY_CIRCULAR; }
 uint32_t imu_log_capacity_bytes(void) { return DATA_CAPACITY; }
 
 uint32_t imu_log_bytes_stored(void)
@@ -396,16 +384,6 @@ void imu_log_append(const struct imu_sample *s, uint32_t n)
 
     k_mutex_lock(&log_lock, K_FOREVER);
     for (uint32_t i = 0; i < n; i++) {
-        if (cur_policy == IMU_LOG_POLICY_STOP && total_abs >= cur_limit) {
-            accum_flush();
-            dir_refresh_current(true);
-            active = false;
-            LOG_WRN("IMU log session %u full (%u records) — stopped",
-                    cur_seq, cur_count);
-            k_mutex_unlock(&log_lock);
-            return;
-        }
-
         if (accum_fill == 0) {
             accum_rec_base = total_abs;
         }

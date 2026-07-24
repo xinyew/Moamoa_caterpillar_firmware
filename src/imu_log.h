@@ -20,17 +20,17 @@
  * the sampling config and the wall-clock start time (from the 0xFFEE
  * sync), so any dump is self-describing.
  *
- * A session runs from start until stop (BLE), BLE disconnect (the app
- * auto-closes it), or — under the stop-when-full policy — when writing
- * on would destroy the oldest surviving session.  Circular sessions
- * never stop: they overwrite the oldest data and invalidate directory
- * entries whose records get consumed.  Power loss mid-session loses at
- * most the last ~8 KB of that session's accounting (the directory
- * entry is refreshed every 512 records).
+ * Storage is ALWAYS circular: a session runs from start until stop
+ * (BLE) or BLE disconnect (the app auto-closes it), never stopping for
+ * space.  When the write head reaches the beginning of an older
+ * session's data, that session's directory entry is removed and a BLE
+ * message (0xFFEC) announces it, so the GUI list stays truthful.
+ * Power loss mid-session loses at most the last ~8 KB of that
+ * session's accounting (the entry is refreshed every 512 records).
  */
 
-#define IMU_LOG_POLICY_STOP     0
-#define IMU_LOG_POLICY_CIRCULAR 1
+#define IMU_LOG_POLICY_STOP     0   /* deprecated: no longer honored */
+#define IMU_LOG_POLICY_CIRCULAR 1   /* the only behavior since v1.3.3 */
 
 #define IMU_LOG_MAX_SESSIONS    16
 

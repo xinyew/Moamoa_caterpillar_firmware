@@ -289,6 +289,7 @@ class MainWindow(QMainWindow):
         self._odr_hz = 833.0         # updated when config is applied
         self._seq_last = None        # stream seq16 unwrap state
         self._seq_abs = 0
+        self._session_seqs = ()      # for change detection in the poll
 
         self._build_ui()
 
@@ -411,12 +412,9 @@ class MainWindow(QMainWindow):
         il.addWidget(self.lbl_stream, 6, 0, 1, 2)
         left.addWidget(imu_box)
 
-        log_box = QGroupBox("On-chip log")
+        log_box = QGroupBox("On-chip log (circular — oldest sessions "
+                            "are overwritten)")
         ll = QGridLayout(log_box)
-        self.cmb_policy = QComboBox()
-        self.cmb_policy.addItem("stop when full", P.LOG_POLICY_STOP)
-        self.cmb_policy.addItem("circular (keep newest)",
-                                P.LOG_POLICY_CIRCULAR)
         self.btn_log = QPushButton("Start session (log + stream)")
         self.btn_log.setCheckable(True)
         self.btn_log.clicked.connect(
@@ -440,8 +438,6 @@ class MainWindow(QMainWindow):
         self.btn_plot.clicked.connect(self._plot_dump)
         btn_open = QPushButton("Open .npz…")
         btn_open.clicked.connect(self._open_npz)
-        ll.addWidget(QLabel("Fill policy"), 0, 0)
-        ll.addWidget(self.cmb_policy, 0, 1)
         ll.addWidget(self.btn_log, 1, 0)
         ll.addWidget(btn_erase, 1, 1)
         ll.addWidget(self.bar_log, 2, 0, 1, 2)
@@ -494,7 +490,7 @@ class MainWindow(QMainWindow):
             self.chk_rail, self.chk_drv,
             self.cmb_odr, self.cmb_preview, self.cmb_content,
             self.cmb_afs, self.cmb_gfs, self.btn_apply,
-            self.cmb_policy, self.btn_log, self.btn_erase,
+            self.btn_log, self.btn_erase,
             self.cmb_sessions, self.btn_dump,
         ]
         self._set_connected_ui(False)
@@ -566,6 +562,15 @@ class MainWindow(QMainWindow):
             self.btn_log.setText("Stop session" if st.log_active
                                  else "Start session (log + stream)")
 
+        # Keep the stored-session list truthful while logging runs:
+        # circular overwrite can remove old sessions at any moment.
+        try:
+            sessions = await self.ble.read_sessions()
+        except Exception:
+            return
+        if tuple(s.seq for s in sessions) != self._session_seqs:
+            self._populate_sessions(sessions)
+
     async def _run_tput(self):
         if not self.ble.connected:
             return
@@ -597,7 +602,7 @@ class MainWindow(QMainWindow):
 
     async def _start_session(self):
         """One click = flash logging + live stream together."""
-        await self.ble.log_cmd(P.LOG_CMD_START, self.cmb_policy.currentData())
+        await self.ble.log_cmd(P.LOG_CMD_START, P.LOG_POLICY_CIRCULAR)
         self._t = np.zeros(0)
         self._acc = np.zeros((0, 3))
         self._gyr = np.zeros((0, 3))
@@ -609,7 +614,7 @@ class MainWindow(QMainWindow):
         await self.ble.stream_start()
         self._plot_timer.start()
         self.btn_log.setText("Stop session")
-        self.log(f"Session started ({self.cmb_policy.currentText()})")
+        self.log("Session started")
 
     async def _stop_session(self):
         self._plot_timer.stop()
@@ -626,6 +631,12 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self.log(f"Session list read failed: {e}")
             return
+        self._populate_sessions(sessions)
+        self.log(f"{len(sessions)} stored session(s) on device")
+
+    def _populate_sessions(self, sessions: list):
+        selected: P.Session | None = self.cmb_sessions.currentData()
+        self._session_seqs = tuple(s.seq for s in sessions)
         self.cmb_sessions.clear()
         for s in sessions:
             when = (time.strftime("%Y-%m-%d %H:%M:%S",
@@ -636,7 +647,12 @@ class MainWindow(QMainWindow):
                 f"#{s.seq} · {when} · {s.rec_count:,} rec @ {hz} Hz", s)
         if not sessions:
             self.cmb_sessions.addItem("(no stored sessions)", None)
-        self.log(f"{len(sessions)} stored session(s) on device")
+        elif selected is not None:
+            for i in range(self.cmb_sessions.count()):
+                d = self.cmb_sessions.itemData(i)
+                if d is not None and d.seq == selected.seq:
+                    self.cmb_sessions.setCurrentIndex(i)
+                    break
 
     async def _toggle_session(self):
         if not self.ble.connected:
