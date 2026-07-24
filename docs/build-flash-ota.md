@@ -28,6 +28,24 @@ nrfutil sdk-manager toolchain launch --ncs-version v3.3.0 -- ^
   the *running* FLPR version (status byte 24+), proving the embedded
   coprocessor update actually took.
 
+## Line endings (new machine setup!)
+
+The settings drift guard hashes `settings.yml`, so it must check out
+byte-identical (LF).  This repo carries no `.gitattributes` by owner
+preference — the rules live in the user's global
+`~/.config/git/attributes` (`core.attributesfile`):
+
+```
+settings.yml text eol=lf
+settings_gen.h text eol=lf
+protocol_limits.py text eol=lf
+```
+
+**A fresh clone on a Windows machine without this config will fail the
+build** ("generated files are stale") because autocrlf rewrites
+settings.yml at checkout.  Set up the global attributes file (or run
+`python scripts/generate_settings.py` after cloning to restamp).
+
 ## Flash over SWD
 
 ```
