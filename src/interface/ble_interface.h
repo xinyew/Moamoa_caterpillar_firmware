@@ -39,4 +39,10 @@ uint32_t ble_wall_now(void);
  */
 void ble_session_conn_params(bool slow);
 
+/**
+ * @brief Set the live-stream preview rate cap (0 = auto/link budget)
+ *        and recompute the decimation factor.
+ */
+void ble_stream_set_preview(uint16_t hz);
+
 #endif /* BLE_INTERFACE_H */

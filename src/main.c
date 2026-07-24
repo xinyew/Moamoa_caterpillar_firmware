@@ -23,15 +23,11 @@
 #include "interface/ble_interface.h"
 #include "imu_pump.h"
 #include "imu_log.h"
+#include "settings_store.h"
 #include "flpr_launch.h"
+#include <zephyr/sys/barrier.h>
 
 LOG_MODULE_REGISTER(caterpillar_main, LOG_LEVEL_DBG);
-
-/* Motor rail (VDC) pre-programmed into the digipot at boot so the rail
- * comes up at a known-safe voltage when a session enables it (never
- * the digipot's power-on default of ~1.0 V or a stale NV value).
- */
-#define MOTOR_VDC_V  3.1f
 
 /* Boot reset cause, exposed via the BLE status characteristic */
 uint32_t app_reset_cause;
@@ -53,6 +49,9 @@ int main(void)
         (void)hwinfo_clear_reset_cause();
     }
 
+    /* Persisted settings (registry generated from settings.yml) */
+    settings_store_init();
+
     /* Status LED on — power/boot indicator until the heartbeat starts */
     if (drv_led_init() < 0) {
         LOG_ERR("Failed to init status LED");
@@ -66,8 +65,12 @@ int main(void)
         LOG_ERR("Failed to init VDC sense");
     }
 
-    /* MAX5419LETA digipot — pre-program a safe VDC before any enable */
-    if (max5419_init() != 0 || max5419_set_voltage(MOTOR_VDC_V) != 0) {
+    /* MAX5419LETA digipot — pre-program the persisted VDC before any
+     * enable (never the digipot's power-on default of ~1.0 V)
+     */
+    float vdc_v = (float)settings_get(SETTING_MOTOR_VDC_MV) / 1000.0f;
+
+    if (max5419_init() != 0 || max5419_set_voltage(vdc_v) != 0) {
         LOG_ERR("Digipot voltage set failed");
     }
 
@@ -89,6 +92,7 @@ int main(void)
      * rail/driver switches appear dead.
      */
     drv_pwm_set_duty(0, 50);
+    (void)drv_pwm_set_frequency(settings_get(SETTING_MOTOR_FREQ_HZ));
 
     /* IMU flash log + ring pump */
     if (imu_log_init() < 0) {
@@ -103,6 +107,9 @@ int main(void)
 
     /* Alive indicator: 3 × 3 ms flashes per second (timer-driven) */
     drv_led_blink_start();
+    if (settings_get(SETTING_LED_ENABLED) == 0) {
+        drv_led_set_enabled(false);
+    }
 
     /* Health monitor: IMU pipeline problems become BLE messages (and
      * local log lines).  The per-sample console stream is gone — data
@@ -125,6 +132,17 @@ int main(void)
             uint32_t v = sh->flpr_version;
             LOG_INF("FLPR running, fw v%u.%u.%u",
                     (v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF);
+
+            /* Apply the persisted sampling config (the FLPR booted
+             * with its own compile-time default until now)
+             */
+            sh->cfg_odr = (uint8_t)settings_get(SETTING_IMU_ODR_CODE);
+            sh->cfg_content = (uint8_t)settings_get(SETTING_IMU_CONTENT);
+            sh->cfg_accel_fs = (uint8_t)settings_get(SETTING_IMU_ACCEL_FS);
+            sh->cfg_gyro_fs = (uint8_t)settings_get(SETTING_IMU_GYRO_FS);
+            barrier_dmem_fence_full();
+            sh->cfg_seq = sh->cfg_seq + 1;
+            ble_stream_set_preview(settings_get(SETTING_PREVIEW_HZ));
         }
 
         uint32_t drained = imu_pump_drained();

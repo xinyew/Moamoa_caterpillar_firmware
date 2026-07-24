@@ -33,8 +33,14 @@ UUID_LED = _u16(0xFFED)       # write u8 / read u8: heartbeat LED enable
 UUID_TIME = _u16(0xFFEE)      # write u32 LE unix epoch / read device epoch
 UUID_DIR = _u16(0xFFEF)       # read: session directory (newest first)
 
-FREQ_MIN_HZ, FREQ_MAX_HZ = 4, 1000
-VOLT_MIN_MV, VOLT_MAX_MV = 750, 4200
+# Limits come from the generated registry (settings.yml is the single
+# source of truth — run scripts/generate_settings.py after edits)
+from protocol_limits import (
+    MOTOR_FREQ_HZ_MIN as FREQ_MIN_HZ,
+    MOTOR_FREQ_HZ_MAX as FREQ_MAX_HZ,
+    MOTOR_VDC_MV_MIN as VOLT_MIN_MV,
+    MOTOR_VDC_MV_MAX as VOLT_MAX_MV,
+)
 
 # IMU_ODR_* codes -> Hz
 ODR_HZ = {1: 12.5, 2: 26, 3: 52, 4: 104, 5: 208,

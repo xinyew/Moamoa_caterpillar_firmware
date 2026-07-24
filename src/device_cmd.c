@@ -6,6 +6,7 @@
 #include "drivers/max5419.h"
 #include "drivers/driver_vdc_sense.h"
 #include "imu_log.h"
+#include "settings_store.h"
 #include "interface/ble_interface.h"
 
 #include <zephyr/kernel.h>
@@ -32,6 +33,7 @@ static void execute(const struct device_cmd *cmd)
             ble_msg("VDC set to %u mV failed (%d)", cmd->volt_mv, ret);
             break;
         }
+        settings_set(SETTING_MOTOR_VDC_MV, cmd->volt_mv);
         /* Converter settle, then verify the rail for the log */
         k_msleep(20);
         int32_t meas_mv = 0;

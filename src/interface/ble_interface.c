@@ -40,6 +40,7 @@
 #include "../drivers/driver_drv8212.h"
 #include "../drivers/driver_led.h"
 #include "../device_cmd.h"
+#include "../settings_store.h"
 #include "../imu_pump.h"
 #include "../imu_log.h"
 #include "common/imu_shared.h"
@@ -150,6 +151,7 @@ static ssize_t on_freq_write(struct bt_conn *conn,
         return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
     }
 
+    settings_set(SETTING_MOTOR_FREQ_HZ, hz);
     return len;
 }
 
@@ -431,6 +433,7 @@ static ssize_t on_led_write(struct bt_conn *conn,
     }
 
     drv_led_set_enabled(on != 0);
+    settings_set(SETTING_LED_ENABLED, on);
     return len;
 }
 
@@ -471,6 +474,12 @@ static void stream_update_decim(void)
     stream_decim = (uint8_t)CLAMP(d, 1, 255);
 }
 
+void ble_stream_set_preview(uint16_t hz)
+{
+    stream_preview_hz = hz;
+    stream_update_decim();
+}
+
 static ssize_t on_imucfg_write(struct bt_conn *conn,
                                const struct bt_gatt_attr *attr,
                                const void *buf, uint16_t len,
@@ -507,9 +516,14 @@ static ssize_t on_imucfg_write(struct bt_conn *conn,
      * 0 or absent = auto (whatever the link budget allows).  Logging
      * always runs at the full ODR regardless.
      */
-    stream_preview_hz = (len >= 6) ? sys_get_le16(&p[4]) : 0;
+    ble_stream_set_preview((len >= 6) ? sys_get_le16(&p[4]) : 0);
 
-    stream_update_decim();
+    settings_set(SETTING_IMU_ODR_CODE, odr);
+    settings_set(SETTING_IMU_CONTENT, content);
+    settings_set(SETTING_IMU_ACCEL_FS, afs);
+    settings_set(SETTING_IMU_GYRO_FS, gfs);
+    settings_set(SETTING_PREVIEW_HZ, stream_preview_hz);
+
     LOG_INF("BLE: IMU cfg -> odr=%u Hz content=0x%x fs=%u/%u "
             "preview=%u Hz (decim %u)", odr_hz[odr], content, afs, gfs,
             stream_preview_hz, stream_decim);

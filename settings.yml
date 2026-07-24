@@ -1,0 +1,69 @@
+# Device settings — single source of truth (biosensor-project pattern).
+#
+# Regenerate after editing:   python scripts/generate_settings.py
+# Outputs (all AUTO-GENERATED, do not edit by hand):
+#   src/settings_gen.h        C table: ids, names, defaults, ranges
+#   scripts/protocol_limits.py  limits shared by protocol.py / GUI / CLI
+#   docs/settings.md          human-readable table
+#
+# All values are u16.  Settings persist across reboots in the spare
+# 4 KB flash partition at 0x164000 (see src/settings_store.c) and are
+# applied at boot; rail/driver enables are deliberately NOT settings —
+# the motor always boots off.
+
+settings:
+  - id: 1
+    name: motor_freq_hz
+    default: 150
+    min: 4
+    max: 1000
+    desc: PWM drive frequency [Hz]
+
+  - id: 2
+    name: motor_vdc_mv
+    default: 3100
+    min: 750
+    max: 4200
+    desc: Motor rail voltage target [mV] (digipot, tap-quantized)
+
+  - id: 3
+    name: imu_odr_code
+    default: 7
+    min: 1
+    max: 10
+    desc: IMU ODR code (1=12.5 Hz .. 10=6.66 kHz)
+
+  - id: 4
+    name: imu_content
+    default: 3
+    min: 1
+    max: 3
+    desc: IMU content mask (bit0 accel, bit1 gyro)
+
+  - id: 5
+    name: imu_accel_fs
+    default: 0
+    min: 0
+    max: 3
+    desc: Accel full-scale (0=±2g 1=±4g 2=±8g 3=±16g)
+
+  - id: 6
+    name: imu_gyro_fs
+    default: 0
+    min: 0
+    max: 3
+    desc: Gyro full-scale (0=±250 1=±500 2=±1000 3=±2000 dps)
+
+  - id: 7
+    name: preview_hz
+    default: 0
+    min: 0
+    max: 6660
+    desc: Live-stream rate cap [Hz] (0 = auto/link budget)
+
+  - id: 8
+    name: led_enabled
+    default: 1
+    min: 0
+    max: 1
+    desc: Heartbeat LED on/off
