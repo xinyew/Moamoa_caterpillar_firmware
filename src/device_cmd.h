@@ -22,6 +22,11 @@ enum device_cmd_type {
     DEVICE_CMD_LOG,           /* session start/stop/erase (slow) */
 };
 
+/* DEVICE_CMD_LOG operations (wire values of the 0xFFEA command byte) */
+#define DEVICE_LOG_OP_STOP   0
+#define DEVICE_LOG_OP_START  1
+#define DEVICE_LOG_OP_ERASE  2
+
 struct device_cmd {
     uint8_t type;
     union {

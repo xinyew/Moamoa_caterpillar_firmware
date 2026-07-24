@@ -31,7 +31,8 @@
 
 #include "imu_log.h"
 #include "settings_store.h"
-#include "interface/ble_interface.h"   /* ble_wall_now() */
+#include "session.h"                    /* session_wall_now() */
+#include "interface/ble_transport.h"    /* ble_msg() */
 
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/flash.h>
@@ -372,7 +373,7 @@ int imu_log_start(uint8_t policy)
         .seq = cur_seq,
         .start_rec = cur_start,
         .rec_count = 0,
-        .wall_start = ble_wall_now(),
+        .wall_start = session_wall_now(),
         .odr_code = (uint8_t)settings_get(SETTING_IMU_ODR_CODE),
         .content = (uint8_t)settings_get(SETTING_IMU_CONTENT),
         .accel_fs = (uint8_t)settings_get(SETTING_IMU_ACCEL_FS),
