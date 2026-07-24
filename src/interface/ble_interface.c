@@ -11,6 +11,7 @@
  *   0xFFE7 — write: throughput test sink / read: u32 LE byte counter
  *            (temporary tuning aid — remove when BLE tuning is done)
  *   0xFFE8 — write: IMU sampling config {odr, content, accel_fs, gyro_fs}
+ *            (+ optional u16 LE preview-rate cap in Hz, 0 = auto)
  *            read: config + applied status + overrun count (12 B)
  *   0xFFE9 — notify: live IMU sample stream (8 B header + N×16 B records,
  *            decimated to fit the link; flash always gets full rate)
@@ -456,11 +457,17 @@ static const uint16_t odr_hz[11] = {
 #define STREAM_BUDGET_SPS  1300
 
 static uint8_t stream_decim = 1;
+static uint16_t stream_preview_hz;   /* 0 = auto (link-budget limit) */
 
 static void stream_update_decim(void)
 {
     uint16_t hz = odr_hz[IMU_SHARED->cfg_odr <= 10 ? IMU_SHARED->cfg_odr : 0];
-    uint32_t d = (hz + STREAM_BUDGET_SPS - 1) / STREAM_BUDGET_SPS;
+    uint32_t target = STREAM_BUDGET_SPS;
+
+    if (stream_preview_hz != 0 && stream_preview_hz < target) {
+        target = stream_preview_hz;
+    }
+    uint32_t d = (hz + target - 1) / target;
 
     stream_decim = (uint8_t)CLAMP(d, 1, 255);
 }
@@ -497,9 +504,16 @@ static ssize_t on_imucfg_write(struct bt_conn *conn,
     barrier_dmem_fence_full();
     sh->cfg_seq = sh->cfg_seq + 1;
 
+    /* Optional bytes 4-5: live-preview rate cap in Hz (u16 LE);
+     * 0 or absent = auto (whatever the link budget allows).  Logging
+     * always runs at the full ODR regardless.
+     */
+    stream_preview_hz = (len >= 6) ? sys_get_le16(&p[4]) : 0;
+
     stream_update_decim();
-    LOG_INF("BLE: IMU cfg -> odr=%u Hz content=0x%x fs=%u/%u (decim %u)",
-            odr_hz[odr], content, afs, gfs, stream_decim);
+    LOG_INF("BLE: IMU cfg -> odr=%u Hz content=0x%x fs=%u/%u "
+            "preview=%u Hz (decim %u)", odr_hz[odr], content, afs, gfs,
+            stream_preview_hz, stream_decim);
     return len;
 }
 

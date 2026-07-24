@@ -194,11 +194,14 @@ class BleWorker:
 
     # ---- IMU ------------------------------------------------------------
 
-    async def set_imu_cfg(self, odr: int, content: int, afs: int, gfs: int):
+    async def set_imu_cfg(self, odr: int, content: int, afs: int, gfs: int,
+                          preview_hz: int = 0):
         await self.client.write_gatt_char(
-            P.UUID_IMU_CFG, P.encode_imu_cfg(odr, content, afs, gfs),
+            P.UUID_IMU_CFG,
+            P.encode_imu_cfg(odr, content, afs, gfs, preview_hz),
             response=True)
-        self.ui.log(f"IMU config -> {P.ODR_HZ[odr]} Hz, "
+        pv = f"{preview_hz} Hz" if preview_hz else "auto"
+        self.ui.log(f"IMU config -> log {P.ODR_HZ[odr]} Hz, preview {pv}, "
                     f"content=0x{content:x}, "
                     f"±{P.ACCEL_FS_G[afs]} g / ±{P.GYRO_FS_DPS[gfs]} dps")
 
@@ -372,6 +375,13 @@ class MainWindow(QMainWindow):
         for code, hz in P.ODR_HZ.items():
             self.cmb_odr.addItem(f"{hz} Hz", code)
         self.cmb_odr.setCurrentIndex(6)  # 833 Hz boot default
+        self.cmb_preview = QComboBox()
+        self.cmb_preview.setToolTip(
+            "Rate of the live BLE preview only — flash logging always "
+            "records at the full ODR. Lower rates leave link headroom.")
+        self.cmb_preview.addItem("auto (max)", 0)
+        for hz in (833, 416, 208, 104, 52, 26, 13):
+            self.cmb_preview.addItem(f"~{hz} Hz", hz)
         self.cmb_content = QComboBox()
         self.cmb_content.addItem("accel + gyro",
                                  P.CONTENT_ACCEL | P.CONTENT_GYRO)
@@ -387,16 +397,18 @@ class MainWindow(QMainWindow):
         btn_apply.clicked.connect(
             lambda: asyncio.ensure_future(self._apply_imu_cfg()))
         self.lbl_stream = QLabel("stream: off")
-        il.addWidget(QLabel("ODR"), 0, 0)
+        il.addWidget(QLabel("Log ODR"), 0, 0)
         il.addWidget(self.cmb_odr, 0, 1)
-        il.addWidget(QLabel("Content"), 1, 0)
-        il.addWidget(self.cmb_content, 1, 1)
-        il.addWidget(QLabel("Accel FS"), 2, 0)
-        il.addWidget(self.cmb_afs, 2, 1)
-        il.addWidget(QLabel("Gyro FS"), 3, 0)
-        il.addWidget(self.cmb_gfs, 3, 1)
-        il.addWidget(btn_apply, 4, 0, 1, 2)
-        il.addWidget(self.lbl_stream, 5, 0, 1, 2)
+        il.addWidget(QLabel("Preview rate"), 1, 0)
+        il.addWidget(self.cmb_preview, 1, 1)
+        il.addWidget(QLabel("Content"), 2, 0)
+        il.addWidget(self.cmb_content, 2, 1)
+        il.addWidget(QLabel("Accel FS"), 3, 0)
+        il.addWidget(self.cmb_afs, 3, 1)
+        il.addWidget(QLabel("Gyro FS"), 4, 0)
+        il.addWidget(self.cmb_gfs, 4, 1)
+        il.addWidget(btn_apply, 5, 0, 1, 2)
+        il.addWidget(self.lbl_stream, 6, 0, 1, 2)
         left.addWidget(imu_box)
 
         log_box = QGroupBox("On-chip log")
@@ -480,8 +492,8 @@ class MainWindow(QMainWindow):
             self.chk_led, self.btn_tput,
             self.spin_freq, self.btn_freq, self.spin_volt, self.btn_volt,
             self.chk_rail, self.chk_drv,
-            self.cmb_odr, self.cmb_content, self.cmb_afs, self.cmb_gfs,
-            self.btn_apply,
+            self.cmb_odr, self.cmb_preview, self.cmb_content,
+            self.cmb_afs, self.cmb_gfs, self.btn_apply,
             self.cmb_policy, self.btn_log, self.btn_erase,
             self.cmb_sessions, self.btn_dump,
         ]
@@ -580,7 +592,8 @@ class MainWindow(QMainWindow):
         self._odr_hz = float(P.ODR_HZ[self.cmb_odr.currentData()])
         await self.ble.set_imu_cfg(self.cmb_odr.currentData(),
                                    self.cmb_content.currentData(),
-                                   self._afs, self._gfs)
+                                   self._afs, self._gfs,
+                                   self.cmb_preview.currentData())
 
     async def _start_session(self):
         """One click = flash logging + live stream together."""

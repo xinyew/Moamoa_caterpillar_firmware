@@ -77,8 +77,12 @@ def encode_onoff(on: bool) -> bytes:
 
 
 def encode_imu_cfg(odr_code: int, content: int,
-                   accel_fs: int, gyro_fs: int) -> bytes:
-    return bytes([odr_code, content, accel_fs, gyro_fs])
+                   accel_fs: int, gyro_fs: int,
+                   preview_hz: int = 0) -> bytes:
+    """preview_hz caps the live-stream rate (0 = auto/link budget);
+    flash logging always runs at the full ODR."""
+    return bytes([odr_code, content, accel_fs, gyro_fs]) + \
+        struct.pack("<H", preview_hz)
 
 
 def encode_log_cmd(cmd: int, policy: int = LOG_POLICY_STOP) -> bytes:
