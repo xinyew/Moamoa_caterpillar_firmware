@@ -88,6 +88,7 @@ LOG_MODULE_REGISTER(ble_if, LOG_LEVEL_INF);
 #define BT_UUID_CATERPILLAR_LED_VAL     0xFFED
 #define BT_UUID_CATERPILLAR_TIME_VAL    0xFFEE
 #define BT_UUID_CATERPILLAR_DIR_VAL     0xFFEF
+#define BT_UUID_CATERPILLAR_T2LOG_VAL   0xFFF0
 
 #define BT_UUID_CATERPILLAR_SVC  BT_UUID_DECLARE_16(BT_UUID_CATERPILLAR_SVC_VAL)
 #define BT_UUID_CATERPILLAR_FREQ BT_UUID_DECLARE_16(BT_UUID_CATERPILLAR_FREQ_VAL)
@@ -110,6 +111,8 @@ LOG_MODULE_REGISTER(ble_if, LOG_LEVEL_INF);
 #define BT_UUID_CATERPILLAR_LED  BT_UUID_DECLARE_16(BT_UUID_CATERPILLAR_LED_VAL)
 #define BT_UUID_CATERPILLAR_TIME BT_UUID_DECLARE_16(BT_UUID_CATERPILLAR_TIME_VAL)
 #define BT_UUID_CATERPILLAR_DIR  BT_UUID_DECLARE_16(BT_UUID_CATERPILLAR_DIR_VAL)
+#define BT_UUID_CATERPILLAR_T2LOG \
+    BT_UUID_DECLARE_16(BT_UUID_CATERPILLAR_T2LOG_VAL)
 
 /* -------------------------------------------------------------------------- */
 /*  Advertising data                                                          */
@@ -972,6 +975,51 @@ K_THREAD_DEFINE(dump_tid, 2048, dump_thread, NULL, NULL, NULL, 7, 0, 0);
 /*  Device message channel (0xFFEC): warning/error lines, replaces RTT        */
 /* -------------------------------------------------------------------------- */
 
+/* Tier-2 log: every ble_msg line also lands in a 2 KB RAM ring that
+ * clients can read AFTER THE FACT via 0xFFF0 — warnings emitted while
+ * nobody was subscribed (or even connected) stay queryable until they
+ * age out.  Lesson learned: flash-write errors went to RTT only and
+ * stayed invisible for weeks.
+ */
+#define T2_RING_SIZE 2048
+
+static char t2_ring[T2_RING_SIZE];
+static uint32_t t2_head;             /* total bytes ever written */
+
+static void t2_store(const char *line)
+{
+    char stamped[MSG_LEN + 16];
+    int64_t up = k_uptime_get();
+    int n = snprintf(stamped, sizeof(stamped), "[%5lld.%03lld] %s\n",
+                     up / 1000, up % 1000, line);
+
+    if (n <= 0) {
+        return;
+    }
+    n = MIN(n, (int)sizeof(stamped) - 1);
+    for (int i = 0; i < n; i++) {
+        t2_ring[t2_head % T2_RING_SIZE] = stamped[i];
+        t2_head++;
+    }
+}
+
+static ssize_t on_t2log_read(struct bt_conn *conn,
+                             const struct bt_gatt_attr *attr,
+                             void *buf, uint16_t len, uint16_t offset)
+{
+    static char snap[T2_RING_SIZE];
+    k_spinlock_key_t key = k_spin_lock(&msgq_lock);
+    uint32_t used = MIN(t2_head, (uint32_t)T2_RING_SIZE);
+    uint32_t start = t2_head - used;
+
+    for (uint32_t i = 0; i < used; i++) {
+        snap[i] = t2_ring[(start + i) % T2_RING_SIZE];
+    }
+    k_spin_unlock(&msgq_lock, key);
+
+    return bt_gatt_attr_read(conn, attr, buf, len, offset, snap, used);
+}
+
 void ble_msg(const char *fmt, ...)
 {
     char line[MSG_LEN];
@@ -993,6 +1041,7 @@ void ble_msg(const char *fmt, ...)
      */
     k_spinlock_key_t key = k_spin_lock(&msgq_lock);
 
+    t2_store(line);
     if (msgq_head - msgq_tail < MSGQ_N) {
         strncpy(msgq[msgq_head % MSGQ_N], line, MSG_LEN - 1);
         msgq[msgq_head % MSGQ_N][MSG_LEN - 1] = '\0';
@@ -1072,6 +1121,10 @@ BT_GATT_SERVICE_DEFINE(caterpillar_svc,
         BT_GATT_CHRC_READ,
         BT_GATT_PERM_READ,
         on_dir_read, NULL, NULL),
+    BT_GATT_CHARACTERISTIC(BT_UUID_CATERPILLAR_T2LOG,
+        BT_GATT_CHRC_READ,
+        BT_GATT_PERM_READ,
+        on_t2log_read, NULL, NULL),
 );
 
 /* -------------------------------------------------------------------------- */

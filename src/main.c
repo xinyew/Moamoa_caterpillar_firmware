@@ -26,6 +26,7 @@
 #include "settings_store.h"
 #include "flpr_launch.h"
 #include <zephyr/sys/barrier.h>
+#include <app_version.h>
 
 LOG_MODULE_REGISTER(caterpillar_main, LOG_LEVEL_DBG);
 
@@ -104,6 +105,13 @@ int main(void)
     if (ble_interface_init() < 0) {
         LOG_ERR("Failed to init BLE");
     }
+
+    /* Boot marker into the tier-2 log ring (queryable via 0xFFF0
+     * even though nobody is connected yet)
+     */
+    ble_msg("boot: fw v%u.%u.%u, reset cause 0x%08x",
+            APP_VERSION_MAJOR, APP_VERSION_MINOR, APP_PATCHLEVEL,
+            app_reset_cause);
 
     /* Alive indicator: 3 × 3 ms flashes per second (timer-driven) */
     drv_led_blink_start();

@@ -36,6 +36,7 @@ Write Without Response.
 | 0xFFED | write+read | Heartbeat-LED enable, u8 0/1 |
 | 0xFFEE | write+read | Wall-clock sync: write u32 unix epoch (UTC); read device epoch estimate (0 = never synced since boot) |
 | 0xFFEF | read | Session directory (below) |
+| 0xFFF0 | read | Tier-2 log: last 2 KB of warning/error lines (uptime-stamped text; includes history from before the connection) |
 
 ## Status packet (0xFFE6 read, 44 B, version 3)
 

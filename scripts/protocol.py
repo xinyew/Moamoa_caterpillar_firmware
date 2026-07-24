@@ -32,6 +32,7 @@ UUID_MSG = _u16(0xFFEC)       # notify: text lines
 UUID_LED = _u16(0xFFED)       # write u8 / read u8: heartbeat LED enable
 UUID_TIME = _u16(0xFFEE)      # write u32 LE unix epoch / read device epoch
 UUID_DIR = _u16(0xFFEF)       # read: session directory (newest first)
+UUID_T2LOG = _u16(0xFFF0)     # read: last 2 KB of device log lines (text)
 
 # Limits come from the generated registry (settings.yml is the single
 # source of truth — run scripts/generate_settings.py after edits)

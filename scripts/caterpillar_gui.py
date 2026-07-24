@@ -356,12 +356,19 @@ class MainWindow(QMainWindow):
         self.btn_tput = QPushButton("Throughput test")
         self.btn_tput.clicked.connect(
             lambda: asyncio.ensure_future(self._run_tput()))
+        self.btn_devlog = QPushButton("Device log")
+        self.btn_devlog.setToolTip(
+            "Read the device's recent warning/error history (2 KB ring "
+            "— includes lines from before this connection).")
+        self.btn_devlog.clicked.connect(
+            lambda: asyncio.ensure_future(self._read_devlog()))
         cl.addWidget(self.btn_connect, 0, 0)
         cl.addWidget(self.lbl_conn, 0, 1)
         cl.addWidget(QLabel("Firmware:"), 1, 0)
         cl.addWidget(self.lbl_fw, 1, 1)
         cl.addWidget(self.chk_led, 2, 0)
         cl.addWidget(self.btn_tput, 2, 1)
+        cl.addWidget(self.btn_devlog, 3, 0, 1, 2)
         left.addWidget(conn_box)
 
         motor_box = QGroupBox("Motor")
@@ -515,7 +522,7 @@ class MainWindow(QMainWindow):
         # viewer buttons (btn_plot / btn_open work offline on saved
         # files) and the console.
         self._conn_widgets = [
-            self.chk_led, self.btn_tput,
+            self.chk_led, self.btn_tput, self.btn_devlog,
             self.spin_freq, self.btn_freq, self.spin_volt, self.btn_volt,
             self.chk_rail, self.chk_drv,
             self.cmb_odr, self.cmb_preview, self.cmb_content,
@@ -618,6 +625,20 @@ class MainWindow(QMainWindow):
                      f"connection; reconnect and retry.")
         finally:
             self.btn_tput.setEnabled(True)
+
+    async def _read_devlog(self):
+        if not self.ble.connected:
+            return
+        try:
+            data = await self.ble.client.read_gatt_char(P.UUID_T2LOG)
+        except Exception as e:
+            self.log(f"Device log read failed: {e}")
+            return
+        text = bytes(data).decode(errors="replace").rstrip()
+        self.log("---- device log (recent history) ----")
+        for line in text.splitlines():
+            self.log(f"  {line}")
+        self.log("---- end device log ----")
 
     async def _apply_imu_cfg(self):
         if not self.ble.connected:
